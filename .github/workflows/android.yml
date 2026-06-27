@@ -35,8 +35,12 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
 
+      - name: List generated APKs
+        run: |
+          ls -lah app/build/outputs/apk/release/
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Station_Abo_Ahmed_Release_APK
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/release/app-release.apk
