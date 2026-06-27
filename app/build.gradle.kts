@@ -40,6 +40,7 @@ android {
       )
     }
     debug {
+      // no signing needed
     }
   }
 

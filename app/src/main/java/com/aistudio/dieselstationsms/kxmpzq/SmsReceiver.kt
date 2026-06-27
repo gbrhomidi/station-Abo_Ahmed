@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import android.telephony.SmsManager
-import org.json.JSONObject
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -47,7 +46,7 @@ class SmsReceiver : BroadcastReceiver() {
                     msgBody.contains("موقع") || msgBody.contains("location") -> {
                         sendReply(
                             context, db, sender,
-                            "موقع محطة أبو أحمد:\nبجانب مدرسة الاتحاد براس وادي ثاة - الحميدة - العرش\nأوقات العمل: 24 ساعة"
+                            "موقع محطة أبو أحمد:\nبجانب مدرسة الاتحاد برأس وادي ثاة - الحميدة - العرش\nأوقات العمل: 24 ساعة"
                         )
                     }
                 }

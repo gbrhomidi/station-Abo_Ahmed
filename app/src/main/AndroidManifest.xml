@@ -25,6 +25,7 @@
     <uses-feature android:name="android.hardware.telephony" android:required="true" />
 
     <application
+        android:name=".MyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -49,14 +50,14 @@
             </intent-filter>
         </activity>
 
-        <service 
-            android:name=".SMSService" 
+        <service
+            android:name=".SMSService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <receiver 
-            android:name=".SmsReceiver" 
-            android:exported="true" 
+        <receiver
+            android:name=".SmsReceiver"
+            android:exported="true"
             android:permission="android.permission.BROADCAST_SMS">
             <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />

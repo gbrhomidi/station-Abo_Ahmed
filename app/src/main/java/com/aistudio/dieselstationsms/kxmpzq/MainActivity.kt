@@ -46,10 +46,23 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        geminiApiKey = loadEnvKey("GEMINI_API_KEY")
+        try {
+            geminiApiKey = loadEnvKey("GEMINI_API_KEY")
+            Log.d("MainActivity", "Gemini Key loaded: ${if (geminiApiKey.isNotEmpty()) "Yes" else "No"}")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error loading env key", e)
+            Toast.makeText(this, "خطأ في تحميل المفتاح: ${e.message}", Toast.LENGTH_LONG).show()
+        }
 
         requestAllPermissions()
-        startService(Intent(this, SMSService::class.java))
+
+        try {
+            startService(Intent(this, SMSService::class.java))
+            Log.d("MainActivity", "SMSService started")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error starting SMSService", e)
+            Toast.makeText(this, "خطأ في بدء الخدمة: ${e.message}", Toast.LENGTH_LONG).show()
+        }
 
         setContent {
             MyApplicationTheme {
@@ -121,17 +134,22 @@ class MainActivity : ComponentActivity() {
                             // إعادة المحاولة بعد تأخير
                             Handler(Looper.getMainLooper()).postDelayed({
                                 loadUrl("http://127.0.0.1:8080/")
-                            }, 2000)
+                            }, 3000)
+                        }
+
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            Log.d("WebView", "Page loaded: $url")
                         }
                     }
                     webChromeClient = WebChromeClient()
 
                     addJavascriptInterface(WebAppInterface(context, this@MainActivity), "AndroidInterface")
 
-                    // تأخير أكبر للسماح لخادم NanoHTTPD بالبدء
+                    // تأخير 3 ثوانٍ لضمان بدء الخادم
                     Handler(Looper.getMainLooper()).postDelayed({
                         loadUrl("http://127.0.0.1:8080/")
-                    }, 2000)
+                    }, 3000)
                 }
             }
         )

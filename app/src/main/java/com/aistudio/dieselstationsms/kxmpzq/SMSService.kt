@@ -25,12 +25,12 @@ class SMSService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        server = ApiServer()
         try {
+            server = ApiServer()
             server?.start()
             Log.d("SMSService", "Server started at port 8080")
         } catch (e: IOException) {
-            e.printStackTrace()
+            Log.e("SMSService", "Failed to start server", e)
         }
         setupAutoBackup()
     }
