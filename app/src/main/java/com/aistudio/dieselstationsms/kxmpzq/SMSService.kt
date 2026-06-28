@@ -1,10 +1,14 @@
 package com.aistudio.dieselstationsms.kxmpzq
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import android.telephony.SmsManager
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,6 +29,37 @@ class SMSService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // =====================================================
+        // START FOREGROUND SERVICE (Required for Android 8+)
+        // =====================================================
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "sms_service_channel"
+            val channelName = "خدمة المحطة"
+            val importance = NotificationManager.IMPORTANCE_LOW
+
+            val channel = NotificationChannel(channelId, channelName, importance)
+            channel.description = "قناة إشعارات خدمة الخادم المحلي لمحطة أبو أحمد"
+
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager?.createNotificationChannel(channel)
+
+            val notification = NotificationCompat.Builder(this, channelId)
+                .setContentTitle("⛽ محطة أبو أحمد")
+                .setContentText("الخادم المحلي يعمل على المنفذ 8080...")
+                .setSmallIcon(android.R.drawable.ic_menu_camera) // استخدم أيقونتك الخاصة بدلاً من هذه
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+
+            startForeground(1, notification)
+            Log.d("SMSService", "Foreground service started with notification.")
+        } else {
+            // للإصدارات الأقدم، يمكن إطلاقها كخدمة عادية، ولكن لا ضرر من التنبيه
+            Log.d("SMSService", "Service started on older Android version.")
+        }
+        // =====================================================
+
+        // بدء الخادم المحلي
         try {
             server = ApiServer()
             server?.start()
@@ -32,6 +67,8 @@ class SMSService : Service() {
         } catch (e: IOException) {
             Log.e("SMSService", "Failed to start server", e)
         }
+
+        // جدولة النسخ الاحتياطي التلقائي
         setupAutoBackup()
     }
 
