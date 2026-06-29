@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.aistudio.dieselstationsms.kxmpzq">
+    xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- ===== الأذونات الأساسية ===== -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
@@ -49,20 +49,23 @@
             </intent-filter>
         </activity>
 
+        <!-- ===== خدمة الخادم (Foreground) ===== -->
         <service
             android:name=".SMSService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- ===== مستقبل الرسائل ===== -->
         <receiver
             android:name=".SmsReceiver"
             android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
+            android:permission="android.permission.RECEIVE_SMS"> <!-- ✅ تم التصحيح -->
             <intent-filter android:priority="999">
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
 
+        <!-- ===== مزود الملفات ===== -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
