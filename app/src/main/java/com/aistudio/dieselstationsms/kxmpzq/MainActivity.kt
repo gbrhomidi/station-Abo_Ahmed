@@ -54,10 +54,8 @@ class MainActivity : ComponentActivity() {
 
         try {
             geminiApiKey = loadEnvKey("GEMINI_API_KEY")
-            Log.d("MainActivity", "Gemini Key loaded: ${if (geminiApiKey.isNotEmpty()) "Yes" else "No"}")
         } catch (e: Exception) {
             Log.e("MainActivity", "Error loading env key", e)
-            Toast.makeText(this, "خطأ في تحميل المفتاح: ${e.message}", Toast.LENGTH_LONG).show()
         }
 
         requestAllPermissions()
@@ -66,7 +64,6 @@ class MainActivity : ComponentActivity() {
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 startService(Intent(this, SMSService::class.java))
-                Log.d("MainActivity", "SMSService started successfully")
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error starting SMSService", e)
             }
@@ -92,23 +89,32 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Error loading .env: ${e.message}")
             ""
         }
     }
 
     private fun requestAllPermissions() {
-        val permissions = mutableListOf(Manifest.permission.SEND_SMS, Manifest.permission.CAMERA)
+        val permissions = mutableListOf(
+            Manifest.permission.SEND_SMS, 
+            Manifest.permission.CAMERA
+        )
+        
+        // إضافة إذن التخزين للأجهزة القديمة فقط (Android 9 وأقل)
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val needed = permissions.filter {
-                checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
-            }.toTypedArray()
-            if (needed.isNotEmpty()) {
-                requestPermissions(needed, ALL_PERMISSIONS)
-            }
+        
+        // طلب الأذونات من المستخدم
+        val needed = permissions.filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }.toTypedArray()
+        
+        if (needed.isNotEmpty()) {
+            requestPermissions(needed, ALL_PERMISSIONS)
         }
     }
 
@@ -131,14 +137,8 @@ class MainActivity : ComponentActivity() {
                     settings.mediaPlaybackRequiresUserGesture = false
 
                     webViewClient = object : WebViewClient() {
-                        override fun onReceivedError(
-                            view: WebView?,
-                            errorCode: Int,
-                            description: String?,
-                            failingUrl: String?
-                        ) {
+                        override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                             super.onReceivedError(view, errorCode, description, failingUrl)
-                            Log.e("WebView", "Error loading page: $description")
                             Handler(Looper.getMainLooper()).postDelayed({
                                 loadUrl("http://127.0.0.1:8080/")
                             }, 3000)
@@ -155,8 +155,6 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    // ... باقي الكود الخاص بـ WebAppInterface و الدوال المساعدة كما هي بدون تغيير ...
-
     fun showBiometricPrompt(onSuccess: () -> Unit, onError: (String) -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val executor = Executors.newSingleThreadExecutor()
@@ -169,117 +167,54 @@ class MainActivity : ComponentActivity() {
                 .build()
 
             val cancellationSignal = CancellationSignal()
-            cancellationSignal.setOnCancelListener {
-                runOnUiThread { onError("cancelled") }
-            }
+            cancellationSignal.setOnCancelListener { runOnUiThread { onError("cancelled") } }
 
-            biometricPrompt.authenticate(
-                cancellationSignal, executor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
-                        super.onAuthenticationSucceeded(result)
-                        runOnUiThread { onSuccess() }
-                    }
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        runOnUiThread { onError("failed") }
-                    }
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                        super.onAuthenticationError(errorCode, errString)
-                        runOnUiThread { onError(errString?.toString() ?: "error") }
-                    }
+            biometricPrompt.authenticate(cancellationSignal, executor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
+                    super.onAuthenticationSucceeded(result)
+                    runOnUiThread { onSuccess() }
                 }
-            )
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    runOnUiThread { onError("failed") }
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    super.onAuthenticationError(errorCode, errString)
+                    runOnUiThread { onError(errString?.toString() ?: "error") }
+                }
+            })
         } else {
             onError("unsupported")
         }
     }
 
-    fun startQrScanner(callback: (String) -> Unit) {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            runOnUiThread {
-                webView.evaluateJavascript("window.startQrScanner && window.startQrScanner()", null)
-            }
-        } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_REQUEST)
-        }
-    }
-
     inner class WebAppInterface(private val context: Context, private val activity: MainActivity) {
-        @JavascriptInterface
-        fun showToast(message: String) {
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        }
         @JavascriptInterface
         fun requestBiometricAuth(): String {
             val result = JSONObject()
             activity.showBiometricPrompt(
                 onSuccess = {
                     result.put("success", true)
-                    result.put("message", "authenticated")
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript("window.onBiometricResult && window.onBiometricResult(${result.toString()})", null)
-                    }
+                    activity.runOnUiThread { webView.evaluateJavascript("window.onBiometricResult && window.onBiometricResult(${result.toString()})", null) }
                 },
                 onError = { error ->
                     result.put("success", false)
-                    result.put("error", error)
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript("window.onBiometricResult && window.onBiometricResult(${result.toString()})", null)
-                    }
+                    activity.runOnUiThread { webView.evaluateJavascript("window.onBiometricResult && window.onBiometricResult(${result.toString()})", null) }
                 }
             )
             return "requested"
         }
+
         @JavascriptInterface
-        fun getGeminiApiKey(): String {
-            return geminiApiKey
-        }
+        fun getGeminiApiKey(): String = geminiApiKey
+        
         @JavascriptInterface
-        fun printInvoice(htmlContent: String) {
-            try {
-                val file = java.io.File(context.filesDir, "invoices/invoice_${System.currentTimeMillis()}.html")
-                file.parentFile?.mkdirs()
-                file.writeText(htmlContent, Charsets.UTF_8)
-                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "text/html")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        @JavascriptInterface
-        fun shareText(text: String) {
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, text)
-            }
-            context.startActivity(Intent.createChooser(intent, "مشاركة"))
-        }
-        @JavascriptInterface
-        fun getDeviceInfo(): String {
-            val info = JSONObject()
-            info.put("model", Build.MODEL)
-            info.put("manufacturer", Build.MANUFACTURER)
-            info.put("androidVersion", Build.VERSION.RELEASE)
-            info.put("sdk", Build.VERSION.SDK_INT)
-            info.put("packageName", context.packageName)
-            info.put("geminiConfigured", geminiApiKey.isNotEmpty())
-            return info.toString()
+        fun showToast(message: String) {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            ALL_PERMISSIONS -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "تم منح الأذونات", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
     }
 }
