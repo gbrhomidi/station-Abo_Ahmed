@@ -62,13 +62,15 @@ class MainActivity : ComponentActivity() {
 
         requestAllPermissions()
 
-        try {
-            startService(Intent(this, SMSService::class.java))
-            Log.d("MainActivity", "SMSService started")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error starting SMSService", e)
-            Toast.makeText(this, "خطأ في بدء الخدمة: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        // تأجيل تشغيل الخدمة لضمان استقرار الأذونات والواجهة
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                startService(Intent(this, SMSService::class.java))
+                Log.d("MainActivity", "SMSService started successfully")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error starting SMSService", e)
+            }
+        }, 2000) 
 
         setContent {
             MyApplicationTheme {
@@ -141,14 +143,8 @@ class MainActivity : ComponentActivity() {
                                 loadUrl("http://127.0.0.1:8080/")
                             }, 3000)
                         }
-
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            super.onPageFinished(view, url)
-                            Log.d("WebView", "Page loaded: $url")
-                        }
                     }
                     webChromeClient = WebChromeClient()
-
                     addJavascriptInterface(WebAppInterface(context, this@MainActivity), "AndroidInterface")
 
                     Handler(Looper.getMainLooper()).postDelayed({
@@ -158,6 +154,8 @@ class MainActivity : ComponentActivity() {
             }
         )
     }
+
+    // ... باقي الكود الخاص بـ WebAppInterface و الدوال المساعدة كما هي بدون تغيير ...
 
     fun showBiometricPrompt(onSuccess: () -> Unit, onError: (String) -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -208,12 +206,10 @@ class MainActivity : ComponentActivity() {
     }
 
     inner class WebAppInterface(private val context: Context, private val activity: MainActivity) {
-
         @JavascriptInterface
         fun showToast(message: String) {
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
-
         @JavascriptInterface
         fun requestBiometricAuth(): String {
             val result = JSONObject()
@@ -235,12 +231,10 @@ class MainActivity : ComponentActivity() {
             )
             return "requested"
         }
-
         @JavascriptInterface
         fun getGeminiApiKey(): String {
             return geminiApiKey
         }
-
         @JavascriptInterface
         fun printInvoice(htmlContent: String) {
             try {
@@ -257,7 +251,6 @@ class MainActivity : ComponentActivity() {
                 e.printStackTrace()
             }
         }
-
         @JavascriptInterface
         fun shareText(text: String) {
             val intent = Intent(Intent.ACTION_SEND).apply {
@@ -266,7 +259,6 @@ class MainActivity : ComponentActivity() {
             }
             context.startActivity(Intent.createChooser(intent, "مشاركة"))
         }
-
         @JavascriptInterface
         fun getDeviceInfo(): String {
             val info = JSONObject()
