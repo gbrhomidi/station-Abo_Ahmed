@@ -9,97 +9,141 @@ import android.os.IBinder
 import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.*
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileWriter
 import java.io.IOException
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.Timer
-import java.util.TimerTask
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class SMSService : Service() {
 
     private var server: ApiServer? = null
-    private var backupTimer: Timer? = null
-    private val GEMINI_API_KEY = "AQ.Ab8RN6I0aFiSTYYPG2gsxkbZG0cZ90lpCSQU0ZjCFj7npGP9tA"
-    private val GEMINI_PROJECT_ID = "481549332362"
+    private val executor = Executors.newSingleThreadScheduledExecutor()
+    private lateinit var geminiApiKey: String
+    private lateinit var geminiProjectId: String
 
     override fun onCreate() {
         super.onCreate()
-
-        // تشغيل جميع العمليات الثقيلة في خيط منفصل لتجنب تجميد الواجهة الرئيسية
-        Thread {
-            try {
-                // 1. إعداد إشعارات الخدمة (مطلوب للإصدارات Android 8+)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val channelId = "sms_service_channel"
-                    val channelName = "خدمة المحطة"
-                    val importance = NotificationManager.IMPORTANCE_LOW
-
-                    val channel = NotificationChannel(channelId, channelName, importance)
-                    channel.description = "قناة إشعارات خدمة الخادم المحلي لمحطة أبو أحمد"
-
-                    val notificationManager = getSystemService(NotificationManager::class.java)
-                    notificationManager?.createNotificationChannel(channel)
-
-                    val notification = NotificationCompat.Builder(this, channelId)
-                        .setContentTitle("⛽ محطة أبو أحمد")
-                        .setContentText("الخادم المحلي يعمل على المنفذ 8080...")
-                        .setSmallIcon(android.R.drawable.ic_menu_camera)
-                        .setPriority(NotificationCompat.PRIORITY_LOW)
-                        .build()
-
-                    startForeground(1, notification)
-                    Log.d("SMSService", "Foreground service started with notification.")
-                }
-
-                // 2. بدء الخادم المحلي
-                try {
-                    server = ApiServer()
-                    server?.start()
-                    Log.d("SMSService", "Server started at port 8080")
-                } catch (e: IOException) {
-                    Log.e("SMSService", "Failed to start server", e)
-                }
-
-                // 3. جدولة النسخ الاحتياطي التلقائي
-                setupAutoBackup()
-
-                Log.d("SMSService", "Service initialization completed successfully in background thread")
-            } catch (e: Exception) {
-                Log.e("SMSService", "Fatal Error in onCreate background thread: ${e.message}", e)
-            }
-        }.start()
+        // قراءة المفاتيح من ملف .env
+        geminiApiKey = loadEnvKey("GEMINI_API_KEY")
+        geminiProjectId = loadEnvKey("GEMINI_PROJECT_ID")
+        Log.d("SMSService", "Service created, API Key loaded: ${if (geminiApiKey.isNotEmpty()) "✅" else "❌"}")
     }
 
-    private fun setupAutoBackup() {
-        backupTimer = Timer()
-        backupTimer?.scheduleAtFixedRate(object : TimerTask() {
-            override fun run() {
-                try {
-                    val db = DatabaseHelper(this@SMSService)
-                    val out = db.exportAllData().toString(2)
-                    val dir = File(filesDir, "backups")
-                    if (!dir.exists()) dir.mkdirs()
-                    val file = File(dir, "auto_backup_${System.currentTimeMillis()}.json")
-                    val writer = FileWriter(file)
-                    writer.write(out)
-                    writer.close()
-                    Log.d("SMSService", "Auto backup completed")
-                } catch (e: Exception) {
-                    Log.e("SMSService", "Auto backup failed: ${e.message}", e)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d("SMSService", "onStartCommand called")
+        
+        // 1. إنشاء الإشعار (إلزامي لـ Foreground Service في Android 8+)
+        startForeground(1, createNotification())
+
+        // 2. تشغيل الخادم والنسخ الاحتياطي في خيط خلفي
+        executor.execute {
+            try {
+                // بدء الخادم مع محاولة منافذ بديلة
+                startServerWithRetry()
+                // جدولة النسخ الاحتياطي باستخدام WorkManager (بديل آمن للـ Timer)
+                scheduleBackupWithWorkManager()
+                Log.d("SMSService", "Service initialization completed successfully")
+            } catch (e: Exception) {
+                Log.e("SMSService", "Fatal error in background thread: ${e.message}", e)
+                stopSelf()
+            }
+        }
+        
+        return START_STICKY  // يضمن إعادة تشغيل الخدمة عند قتلها
+    }
+
+    private fun startServerWithRetry() {
+        val ports = listOf(8080, 8081, 8082, 8083, 8084)
+        var started = false
+        var lastException: Exception? = null
+        
+        for (port in ports) {
+            try {
+                server = ApiServer(port)
+                server?.start()
+                Log.d("SMSService", "Server started successfully on port $port")
+                started = true
+                break
+            } catch (e: IOException) {
+                Log.w("SMSService", "Port $port is busy, trying next port")
+                lastException = e
+            }
+        }
+        
+        if (!started) {
+            Log.e("SMSService", "No available port found")
+            throw IOException("No available port", lastException)
+        }
+    }
+
+    private fun scheduleBackupWithWorkManager() {
+        val constraints = Constraints.Builder()
+            .setRequiresDeviceIdle(false)
+            .setRequiresBatteryNotLow(true)
+            .build()
+
+        val backupRequest = PeriodicWorkRequestBuilder<BackupWorker>(24, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .setInitialDelay(1, TimeUnit.HOURS)
+            .build()
+
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "auto_backup",
+            ExistingPeriodicWorkPolicy.KEEP,
+            backupRequest
+        )
+        Log.d("SMSService", "Auto backup scheduled with WorkManager")
+    }
+
+    private fun createNotification(): Notification {
+        val channelId = "sms_service_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "خدمة المحطة",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            channel.description = "قناة إشعارات خدمة الخادم المحلي لمحطة أبو أحمد"
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+        return NotificationCompat.Builder(this, channelId)
+            .setContentTitle("⛽ محطة أبو أحمد")
+            .setContentText("الخادم المحلي يعمل على المنفذ 8080...")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun loadEnvKey(key: String): String {
+        return try {
+            this.assets.open(".env").use { stream ->
+                BufferedReader(InputStreamReader(stream)).useLines { lines ->
+                    lines.mapNotNull { line ->
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("$key=")) trimmed.substringAfter("=").trim() else null
+                    }.firstOrNull() ?: ""
                 }
             }
-        }, 1000 * 60 * 60, 1000 * 60 * 60 * 24) // تأخير ساعة واحدة، ثم كل 24 ساعة
+        } catch (e: Exception) {
+            Log.e("SMSService", "Failed to load env key: $key", e)
+            ""
+        }
     }
 
     override fun onDestroy() {
         try {
             server?.stop()
-            backupTimer?.cancel()
+            executor.shutdown()
             Log.d("SMSService", "Service destroyed successfully")
         } catch (e: Exception) {
             Log.e("SMSService", "Error during service destruction: ${e.message}", e)
@@ -111,8 +155,13 @@ class SMSService : Service() {
 
     // ==================== GEMINI AI ====================
     private fun callGeminiAPI(prompt: String): String {
+        if (geminiApiKey.isEmpty()) {
+            Log.e("Gemini", "API key is empty")
+            return "عذراً، مفتاح API غير متوفر. يرجى التحقق من ملف .env"
+        }
+        
         return try {
-            val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY")
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$geminiApiKey")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
@@ -227,7 +276,7 @@ class SMSService : Service() {
     }
 
     // ==================== API SERVER ====================
-    private inner class ApiServer : NanoHTTPD(8080) {
+    private inner class ApiServer(private val port: Int) : NanoHTTPD(port) {
         override fun serve(session: IHTTPSession): Response {
             val uri = session.uri
             val method = session.method
@@ -518,7 +567,7 @@ class SMSService : Service() {
                     return serveStaticFile(uri)
                 }
             } catch (e: Exception) {
-                Log.e("SMSService", "Error: ${e.message}", e)
+                Log.e("SMSService", "Error in API: ${e.message}", e)
                 responseJson.put("success", false)
                 responseJson.put("error", e.message)
             }
@@ -532,11 +581,11 @@ class SMSService : Service() {
             return try {
                 when {
                     uri == "/" || uri == "/index.html" -> {
-                        val stream = assets.open("web_interface.html")
+                        val stream = this@SMSService.assets.open("web_interface.html")
                         newChunkedResponse(Response.Status.OK, "text/html; charset=utf-8", stream)
                     }
                     uri == "/html5-qrcode.min.js" -> {
-                        val stream = assets.open("html5-qrcode.min.js")
+                        val stream = this@SMSService.assets.open("html5-qrcode.min.js")
                         newChunkedResponse(Response.Status.OK, "application/javascript", stream)
                     }
                     else -> {
@@ -544,6 +593,7 @@ class SMSService : Service() {
                     }
                 }
             } catch (e: Exception) {
+                Log.e("SMSService", "Error serving static file: ${e.message}", e)
                 newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
             }
         }
@@ -554,11 +604,35 @@ class SMSService : Service() {
             val sms = SmsManager.getDefault()
             sms.sendTextMessage(phone, null, msg, null, null)
             db.logSms(phone, msg, type, "sent")
+            Log.d("SMSService", "SMS sent to $phone: $msg")
             true
         } catch (e: Exception) {
             Log.e("SMSService", "SMS send failed: ${e.message}", e)
             db.logSms(phone, msg, type, "failed: ${e.message}")
             false
+        }
+    }
+
+    // ==================== BackupWorker ====================
+    class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+        override suspend fun doWork(): Result {
+            return try {
+                val db = DatabaseHelper(applicationContext)
+                val out = db.exportAllData().toString(2)
+                val dir = File(applicationContext.filesDir, "backups")
+                if (!dir.exists()) {
+                    dir.mkdirs()
+                }
+                val file = File(dir, "auto_backup_${System.currentTimeMillis()}.json")
+                val writer = FileWriter(file)
+                writer.write(out)
+                writer.close()
+                Log.d("BackupWorker", "Auto backup completed successfully")
+                Result.success()
+            } catch (e: Exception) {
+                Log.e("BackupWorker", "Backup failed: ${e.message}", e)
+                Result.retry()
+            }
         }
     }
 }
