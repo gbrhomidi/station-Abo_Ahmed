@@ -19,11 +19,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // تم إزالة abiFilters لدعم المحاكيات بشكل كامل
-        // ndk {
-        //     abiFilters.add("armeabi-v7a")
-        //     abiFilters.add("arm64-v8a")
-        // }
+        // REMOVED: abiFilters - let Android Studio handle all architectures
+        // This fixes emulator crashes on x86_64 devices
     }
 
     signingConfigs {
@@ -38,7 +35,7 @@ android {
     buildTypes {
         release {
             isCrunchPngs = false
-            isMinifyEnabled = true
+            isMinifyEnabled = false
             signingConfig = signingConfigs["release"]
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -46,7 +43,7 @@ android {
             )
         }
         debug {
-            isMinifyEnabled = false
+            // no signing needed
         }
     }
 
@@ -65,22 +62,6 @@ android {
             isIncludeAndroidResources = true
         }
     }
-
-    // حل تعارضات الحزم
-    packagingOptions {
-        resources {
-            excludes += setOf(
-                "META-INF/*.kotlin_module",
-                "META-INF/*.version",
-                "META-INF/AL2.0",
-                "META-INF/LGPL2.1",
-                "META-INF/LICENSE",
-                "META-INF/NOTICE",
-                "META-INF/DEPENDENCIES",
-                "META-INF/INDEX.LIST"
-            )
-        }
-    }
 }
 
 secrets {
@@ -88,24 +69,12 @@ secrets {
     defaultPropertiesFileName = ".env.example"
 }
 
-// حل تعارضات الإصدارات
-configurations.all {
-    resolutionStrategy {
-        force("com.squareup.okhttp3:okhttp:4.10.0")
-        force("com.squareup.okio:okio:3.0.0")
-        force("com.squareup.okio:okio-jvm:3.0.0")
-        force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
-        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
-        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
-    }
-}
-
 dependencies {
-    // ===== PLATFORMS =====
+    // Platforms
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.firebase.bom))
 
-    // ===== COMPOSE & UI =====
+    // Compose & UI
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material3)
@@ -113,53 +82,30 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
 
-    // ===== CORE & LIFECYCLE =====
+    // Core & Lifecycle
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    // ===== DATA & PERSISTENCE =====
-    implementation(libs.androidx.room.ktx) {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-    }
+    // Data & Persistence
+    implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.runtime)
+    implementation(libs.converter.moshi)
     implementation(libs.moshi.kotlin)
 
-    // ===== WORK MANAGER (للنسخ الاحتياطي) =====
-    implementation(libs.androidx.work)
-
-    // ===== NETWORK & SERVER =====
-    // NanoHTTPD مع استبعاد التبعيات المتعارضة
-    implementation(libs.nanohttpd) {
-        exclude(group = "org.slf4j", module = "slf4j-api")
-        exclude(group = "org.apache.httpcomponents", module = "httpclient")
-        exclude(group = "org.apache.httpcomponents", module = "httpcore")
-        exclude(group = "org.json", module = "json")
-    }
-
-    // OkHttp
-    implementation(libs.okhttp) {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-    }
-
-    // OkHttp Logging Interceptor
-    implementation(libs.logging.interceptor) {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-    }
-
-    // Retrofit
-    implementation(libs.retrofit) {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
-        exclude(group = "com.squareup.okhttp3", module = "okhttp")
-    }
-    implementation(libs.converter.moshi)
-
-    // ===== COROUTINES =====
+    // Networking & Utilities
+    implementation(libs.nanohttpd)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.logging.interceptor)
+    implementation(libs.okhttp)
+    implementation(libs.retrofit)
 
-    // ===== TEST DEPENDENCIES =====
+    // WorkManager for background tasks (NEW - replaces Timer)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // Test Dependencies
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.core)
     testImplementation(libs.androidx.junit)
@@ -170,18 +116,18 @@ dependencies {
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.roborazzi.junit.rule)
 
-    // ===== ANDROID TEST =====
+    // Android Test Dependencies
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.runner)
 
-    // ===== DEBUG =====
+    // Debug Dependencies
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    // ===== KSP =====
+    // KSP (Annotation Processing)
     "ksp"(libs.androidx.room.compiler)
     "ksp"(libs.moshi.kotlin.codegen)
 }
