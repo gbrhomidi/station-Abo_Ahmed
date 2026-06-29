@@ -9,8 +9,6 @@ import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -28,7 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.aistudio.dieselstationsms.kxmpzq.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -41,33 +42,24 @@ class MainActivity : ComponentActivity() {
     private val BIOMETRIC_REQUEST = 102
     private val ALL_PERMISSIONS = 103
     private var geminiApiKey: String = ""
+    private var biometricCancellationSignal: CancellationSignal? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // تفعيل تصحيح أخطاء الـ WebView في نسخة التطوير فقط
         if (BuildConfig.DEBUG) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
-        
         enableEdgeToEdge()
 
-        try {
-            geminiApiKey = loadEnvKey("GEMINI_API_KEY")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error loading env key", e)
-        }
+        geminiApiKey = loadEnvKey("GEMINI_API_KEY")
 
         requestAllPermissions()
 
-        // تأجيل تشغيل الخدمة لضمان استقرار الأذونات والواجهة
-        Handler(Looper.getMainLooper()).postDelayed({
-            try {
-                startService(Intent(this, SMSService::class.java))
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Error starting SMSService", e)
-            }
-        }, 2000) 
+        // ✅ استخدام lifecycleScope بدلاً من Handler
+        lifecycleScope.launch {
+            delay(2000)
+            startSafeService()
+        }
 
         setContent {
             MyApplicationTheme {
@@ -89,32 +81,50 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } catch (e: Exception) {
+            Log.e("MainActivity", "Error loading env key", e)
             ""
         }
     }
 
     private fun requestAllPermissions() {
         val permissions = mutableListOf(
-            Manifest.permission.SEND_SMS, 
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.RECEIVE_SMS,   // ✅ إضافة
+            Manifest.permission.READ_SMS,       // ✅ إضافة
             Manifest.permission.CAMERA
         )
-        
-        // إضافة إذن التخزين للأجهزة القديمة فقط (Android 9 وأقل)
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        
-        // طلب الأذونات من المستخدم
+
         val needed = permissions.filter {
-            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
-        
+
         if (needed.isNotEmpty()) {
-            requestPermissions(needed, ALL_PERMISSIONS)
+            ActivityCompat.requestPermissions(this, needed, ALL_PERMISSIONS)
+        }
+    }
+
+    private fun hasPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun startSafeService() {
+        if (hasPermissions()) {
+            val intent = Intent(this, SMSService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(this, intent)
+            } else {
+                startService(intent)
+            }
+        } else {
+            // سيتم طلب الأذونات تلقائياً
+            Log.w("MainActivity", "Permissions not granted, service delayed")
         }
     }
 
@@ -127,7 +137,6 @@ class MainActivity : ComponentActivity() {
                 WebView(context).apply {
                     webView = this
                     settings.javaScriptEnabled = true
-                    settings.allowFileAccess = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
                     settings.setSupportZoom(true)
@@ -135,26 +144,39 @@ class MainActivity : ComponentActivity() {
                     settings.displayZoomControls = false
                     settings.javaScriptCanOpenWindowsAutomatically = true
                     settings.mediaPlaybackRequiresUserGesture = false
+                    // ✅ إزالة allowFileAccess (أمان)
+                    // settings.allowFileAccess = true
 
                     webViewClient = object : WebViewClient() {
                         override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                             super.onReceivedError(view, errorCode, description, failingUrl)
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                loadUrl("http://127.0.0.1:8080/")
-                            }, 3000)
+                            // محاولة إعادة التحميل بعد 3 ثوانٍ (حتى 3 مرات)
+                            retryLoad()
+                        }
+                        private var retryCount = 0
+                        private fun retryLoad() {
+                            if (retryCount < 3) {
+                                retryCount++
+                                lifecycleScope.launch {
+                                    delay(3000)
+                                    loadUrl("http://127.0.0.1:8080/")
+                                }
+                            }
                         }
                     }
                     webChromeClient = WebChromeClient()
                     addJavascriptInterface(WebAppInterface(context, this@MainActivity), "AndroidInterface")
 
-                    Handler(Looper.getMainLooper()).postDelayed({
+                    lifecycleScope.launch {
+                        delay(3000)
                         loadUrl("http://127.0.0.1:8080/")
-                    }, 3000)
+                    }
                 }
             }
         )
     }
 
+    // ==================== Biometric ====================
     fun showBiometricPrompt(onSuccess: () -> Unit, onError: (String) -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val executor = Executors.newSingleThreadExecutor()
@@ -166,10 +188,12 @@ class MainActivity : ComponentActivity() {
                 }
                 .build()
 
-            val cancellationSignal = CancellationSignal()
-            cancellationSignal.setOnCancelListener { runOnUiThread { onError("cancelled") } }
+            biometricCancellationSignal = CancellationSignal()
+            biometricCancellationSignal?.setOnCancelListener {
+                runOnUiThread { onError("cancelled") }
+            }
 
-            biometricPrompt.authenticate(cancellationSignal, executor, object : BiometricPrompt.AuthenticationCallback() {
+            biometricPrompt.authenticate(biometricCancellationSignal!!, executor, object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
                     super.onAuthenticationSucceeded(result)
                     runOnUiThread { onSuccess() }
@@ -195,11 +219,11 @@ class MainActivity : ComponentActivity() {
             activity.showBiometricPrompt(
                 onSuccess = {
                     result.put("success", true)
-                    activity.runOnUiThread { webView.evaluateJavascript("window.onBiometricResult && window.onBiometricResult(${result.toString()})", null) }
+                    safeEvaluateJs("window.onBiometricResult && window.onBiometricResult(${result.toString()})")
                 },
                 onError = { error ->
                     result.put("success", false)
-                    activity.runOnUiThread { webView.evaluateJavascript("window.onBiometricResult && window.onBiometricResult(${result.toString()})", null) }
+                    safeEvaluateJs("window.onBiometricResult && window.onBiometricResult(${result.toString()})")
                 }
             )
             return "requested"
@@ -207,14 +231,36 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun getGeminiApiKey(): String = geminiApiKey
-        
+
         @JavascriptInterface
         fun showToast(message: String) {
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+
+        private fun safeEvaluateJs(script: String) {
+            activity.runOnUiThread {
+                try {
+                    webView.evaluateJavascript(script, null)
+                } catch (e: Exception) {
+                    Log.e("WebAppInterface", "Failed to evaluate JS", e)
+                }
+            }
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == ALL_PERMISSIONS) {
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                startSafeService()
+            } else {
+                Toast.makeText(this, "بعض الأذونات مطلوبة لتشغيل التطبيق", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        biometricCancellationSignal?.cancel()
+        super.onDestroy()
     }
 }
