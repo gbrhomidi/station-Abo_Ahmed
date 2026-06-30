@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.devtools.ksp)
     alias(libs.plugins.roborazzi)
+    alias(libs.plugins.secrets)
 }
 
 android {
@@ -13,16 +14,17 @@ android {
         applicationId = "com.aistudio.dieselstationsms.kxmpzq"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0 Pro"
+        versionCode = 3
+        versionName = "2.1 Pro"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isCrunchPngs = false
-            isMinifyEnabled = false
+            isCrunchPngs = true
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -67,7 +69,6 @@ android {
 
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
-    implementation(platform(libs.firebase.bom))
 
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material.icons.core)
@@ -81,17 +82,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    implementation(libs.androidx.room.ktx)
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.converter.moshi)
-    implementation(libs.moshi.kotlin)
+    // FIXED: Removed unused Room, Moshi, Retrofit, OkHttp, Firebase dependencies
+    // These were adding ~1MB+ to APK size without being used
 
     implementation(libs.nanohttpd)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.logging.interceptor)
-    implementation(libs.okhttp)
-    implementation(libs.retrofit)
 
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.biometric:biometric:1.1.0")
@@ -114,18 +110,4 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
-
-    "ksp"(libs.androidx.room.compiler)
-    "ksp"(libs.moshi.kotlin.codegen)
-}
-
-configurations.all {
-    resolutionStrategy {
-        force("com.squareup.okhttp3:okhttp:4.10.0")
-        force("com.squareup.okio:okio:3.0.0")
-        force("com.squareup.okio:okio-jvm:3.0.0")
-        force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
-        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
-        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
-    }
 }
