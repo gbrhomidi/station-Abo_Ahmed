@@ -37,14 +37,20 @@ jobs:
 
       - name: Show build outputs
         run: |
-          echo "===== APK ====="
+          echo "===== APK FILES ====="
           find app/build -type f -name "*.apk"
 
-          echo "===== AAB ====="
+          echo
+          echo "===== AAB FILES ====="
           find app/build -type f -name "*.aab"
 
-          echo "===== ALL OUTPUTS ====="
+          echo
+          echo "===== ALL OUTPUT FILES ====="
           find app/build/outputs -type f
+
+          echo
+          echo "===== APK DETAILS ====="
+          ls -lahR app/build/outputs || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
