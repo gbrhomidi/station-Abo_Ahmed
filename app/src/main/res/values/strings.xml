@@ -1,10 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">محطة ابو أحمد لمشتقات الديزل</string>
-    <string name="app_version">الإصدار 2.0 Pro</string>
-    <string name="developer_name">المهندس / جبر الحميدي</string>
-    <string name="biometric_prompt_title">تسجيل الدخول البيومتري</string>
-    <string name="biometric_prompt_subtitle">استخدم بصمة إصبعك أو وجهك للوصول السريع</string>
+    
+    <!-- Biometric Prompt Strings -->
+    <string name="biometric_prompt_title">المصادقة البيومترية</string>
+    <string name="biometric_prompt_subtitle">استخدم بصمة إصبعك أو وجهك للدخول</string>
     <string name="biometric_cancel">إلغاء</string>
-    <string name="channel_name">تنبيهات المحطة</string>
-    <string name="channel_description">إشعارات المخزون والديون والمعاملات</string>
+    <string name="biometric_error_unsupported">المصادقة البيومترية غير مدعومة على هذا الجهاز</string>
+    
+    <!-- General Strings -->
+    <string name="error_generic">حدث خطأ غير متوقع</string>
+    <string name="loading">جاري التحميل...</string>
+    <string name="retry">إعادة المحاولة</string>
+    <string name="cancel">إلغاء</string>
+    <string name="confirm">تأكيد</string>
+    <string name="save">حفظ</string>
+    <string name="delete">حذف</string>
+    <string name="edit">تعديل</string>
+    <string name="search">بحث</string>
+    <string name="filter">تصفية</string>
+    <string name="sort">ترتيب</string>
+    <string name="export">تصدير</string>
+    <string name="import_data">استيراد</string>
+    <string name="backup">نسخ احتياطي</string>
+    <string name="restore">استعادة</string>
+    <string name="settings">الإعدادات</string>
+    <string name="logout">تسجيل الخروج</string>
+    <string name="login">تسجيل الدخول</string>
+    <string name="username">اسم المستخدم</string>
+    <string name="password">كلمة المرور</string>
+    <string name="remember_me">تذكرني</string>
+    <string name="forgot_password">نسيت كلمة المرور</string>
+    <string name="dashboard">لوحة التحكم</string>
+    <string name="customers">العملاء</string>
+    <string name="transactions">المعاملات</string>
+    <string name="inventory">المخزون</string>
+    <string name="reports">التقارير</string>
+    <string name="ai_assistant">المساعد الذكي</string>
+    <string name="sms_center">مركز الرسائل</string>
+    <string name="loyalty_program">برنامج الولاء</string>
+    <string name="notifications">الإشعارات</string>
+    <string name="profile">الملف الشخصي</string>
+    <string name="help">المساعدة</string>
+    <string name="about">عن التطبيق</string>
+    <string name="version">الإصدار</string>
+    <string name="contact_us">تواصل معنا</string>
+    <string name="privacy_policy">سياسة الخصوصية</string>
+    <string name="terms_of_service">شروط الخدمة</string>
 </resources>
