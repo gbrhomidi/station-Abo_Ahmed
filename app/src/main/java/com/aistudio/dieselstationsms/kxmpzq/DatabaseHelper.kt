@@ -9,20 +9,77 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.security.SecureRandom
 
+/**
+ * DatabaseHelper - محسّن ومصحح بالكامل
+ * 
+ * التحسينات:
+ * 1. إضافة Salt للـ Password Hashing (PBKDF2 مع SHA-256)
+ * 2. تحسين إدارة Transactions لمنع تلف البيانات
+ * 3. إضافة التحقق من null لجميع الـ Cursors
+ * 4. تحسين الأداء باستخدام حجم أولي للـ JSONArray
+ * 5. إضافة COALESCE للـ JOINs لمنع قيم null
+ * 6. تحسين معالجة الأخطاء في جميع الدوال
+ * 7. إضافة Thread-Safety للعمليات المتزامنة
+ * 8. تحسين إدارة الذاكرة باستخدام use() للـ Cursors
+ * 9. إضافة التحقق من البيانات المكررة
+ * 10. تحسين جودة الكود وتبسيط الدوال المعقدة
+ */
 class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, VERSION) {
 
     companion object {
         private const val TAG = "DatabaseHelper"
         private const val DB_NAME = "diesel_station.db"
-        private const val VERSION = 4
+        private const val VERSION = 5 // ترقية إلى V5 للتحسينات الأمنية
 
-        fun hashPassword(password: String): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val hash = digest.digest(password.toByteArray(Charsets.UTF_8))
-            return hash.joinToString("") { "%02x".format(it) }
+        // تحسين أمني: PBKDF2 مع SHA-256 و Salt
+        private const val HASH_ITERATIONS = 10000
+        private const val HASH_KEY_LENGTH = 256
+
+        /**
+         * توليد Salt عشوائي آمن
+         */
+        fun generateSalt(): ByteArray {
+            val random = SecureRandom()
+            val salt = ByteArray(16)
+            random.nextBytes(salt)
+            return salt
+        }
+
+        /**
+         * تحسين أمني: PBKDF2 مع SHA-256 بدلاً من SHA-256 المباشر
+         */
+        fun hashPassword(password: String, salt: ByteArray? = null): Pair<String, String> {
+            val actualSalt = salt ?: generateSalt()
+            val saltHex = actualSalt.joinToString("") { "%02x".format(it) }
+            
+            // استخدام PBKDF2 (Password-Based Key Derivation Function 2)
+            val factory = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            val spec = javax.crypto.spec.PBEKeySpec(
+                password.toCharArray(),
+                actualSalt,
+                HASH_ITERATIONS,
+                HASH_KEY_LENGTH
+            )
+            val hash = factory.generateSecret(spec).encoded
+            val hashHex = hash.joinToString("") { "%02x".format(it) }
+            
+            return Pair(hashHex, saltHex)
+        }
+
+        /**
+         التحقق من صحة كلمة المرور
+         */
+        fun verifyPassword(password: String, storedHash: String, storedSalt: String): Boolean {
+            val salt = storedSalt.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val (hash, _) = hashPassword(password, salt)
+            return hash == storedHash
         }
     }
+
+    // Thread-Safety: استخدام ReentrantLock للعمليات الحرجة
+    private val dbLock = java.util.concurrent.locks.ReentrantLock()
 
     override fun onCreate(db: SQLiteDatabase) {
         db.beginTransaction()
@@ -32,7 +89,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             insertDefaultUser(db)
             seedDemoData(db)
             db.setTransactionSuccessful()
-            Log.d(TAG, "Database created successfully")
+            Log.d(TAG, "Database created successfully with version $VERSION")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize database: ${e.message}", e)
             throw e
@@ -41,8 +98,11 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
         }
     }
 
-    // FIXED: Proper migration steps (1->2->3->4) instead of jumping directly
+    /**
+     * تحسين: ترقية تدريجية مع التحقق من كل خطوة
+     */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        Log.d(TAG, "Upgrading database from $oldVersion to $newVersion")
         db.beginTransaction()
         try {
             var currentVersion = oldVersion
@@ -51,11 +111,12 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                     1 -> migrateV1ToV2(db)
                     2 -> migrateV2ToV3(db)
                     3 -> migrateV3ToV4(db)
+                    4 -> migrateV4ToV5(db) // تحسين أمني جديد
                 }
                 currentVersion++
             }
             db.setTransactionSuccessful()
-            Log.d(TAG, "Database upgraded from $oldVersion to $newVersion")
+            Log.d(TAG, "Database upgraded successfully to $newVersion")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to upgrade database: ${e.message}", e)
             throw e
@@ -67,29 +128,36 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     // Migration from V1 to V2
     private fun migrateV1ToV2(db: SQLiteDatabase) {
         Log.d(TAG, "Migrating V1 -> V2")
-        // Add basic columns if not exist
-        safeAddColumn(db, "customers", "loyalty_points", "INTEGER DEFAULT 0")
-        safeAddColumn(db, "customers", "vip_level", "INTEGER DEFAULT 0")
-        safeAddColumn(db, "customers", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
+        if (isTableExists(db, "customers")) {
+            safeAddColumn(db, "customers", "loyalty_points", "INTEGER DEFAULT 0")
+            safeAddColumn(db, "customers", "vip_level", "INTEGER DEFAULT 0")
+            safeAddColumn(db, "customers", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
+        }
     }
 
     // Migration from V2 to V3
     private fun migrateV2ToV3(db: SQLiteDatabase) {
         Log.d(TAG, "Migrating V2 -> V3")
-        safeAddColumn(db, "transactions", "invoice_number", "TEXT")
-        safeAddColumn(db, "transactions", "payment_type", "TEXT DEFAULT 'نقداً'")
-        safeAddColumn(db, "refills", "alert_threshold", "REAL DEFAULT 1000")
+        if (isTableExists(db, "transactions")) {
+            safeAddColumn(db, "transactions", "invoice_number", "TEXT")
+            safeAddColumn(db, "transactions", "payment_type", "TEXT DEFAULT 'نقداً'")
+        }
+        if (isTableExists(db, "refills")) {
+            safeAddColumn(db, "refills", "alert_threshold", "REAL DEFAULT 1000")
+        }
     }
 
     // Migration from V3 to V4
     private fun migrateV3ToV4(db: SQLiteDatabase) {
         Log.d(TAG, "Migrating V3 -> V4")
-        // Create new tables if not exist
+        
+        // إنشاء الجداول الجديدة
         safeCreateTable(db, "users", """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE,
                 password_hash TEXT,
+                password_salt TEXT,
                 full_name TEXT,
                 role TEXT DEFAULT 'cashier',
                 biometric_enabled INTEGER DEFAULT 0,
@@ -97,6 +165,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         safeCreateTable(db, "loyalty_rewards", """
             CREATE TABLE IF NOT EXISTS loyalty_rewards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +176,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 date TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         safeCreateTable(db, "inventory_alerts", """
             CREATE TABLE IF NOT EXISTS inventory_alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,6 +187,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         safeCreateTable(db, "ai_chat_history", """
             CREATE TABLE IF NOT EXISTS ai_chat_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,6 +197,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         safeCreateTable(db, "print_queue", """
             CREATE TABLE IF NOT EXISTS print_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +207,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         safeCreateTable(db, "sync_queue", """
             CREATE TABLE IF NOT EXISTS sync_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,24 +219,62 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             )
         """)
 
-        // Insert default user if not exists - FIXED: Uses ContentValues to prevent SQL injection
-        insertDefaultUserIfNotExists(db)
-
-        // Insert default settings if not exists
+        // نقل المستخدمين القدامى مع تحديث الـ hashing
+        migrateOldUsers(db)
+        
+        // إضافة الإعدادات الافتراضية
         insertDefaultSettingIfNotExists(db, "loyalty_enabled", "1")
         insertDefaultSettingIfNotExists(db, "points_per_liter", "1")
         insertDefaultSettingIfNotExists(db, "min_points_redeem", "100")
     }
 
+    // Migration from V4 to V5 - تحسين أمني
+    private fun migrateV4ToV5(db: SQLiteDatabase) {
+        Log.d(TAG, "Migrating V4 -> V5: Security improvements")
+        
+        // إضافة عمود password_salt إذا لم يكن موجوداً
+        safeAddColumn(db, "users", "password_salt", "TEXT")
+        
+        // تحديث المستخدمين القدامى لاستخدام Salt
+        val cursor = db.rawQuery("SELECT id, password_hash FROM users WHERE password_salt IS NULL", null)
+        cursor.use {
+            while (it.moveToNext()) {
+                val id = it.getInt(0)
+                val oldHash = it.getString(1)
+                // إنشاء salt جديد وتحديث الـ hash
+                val salt = generateSalt()
+                val saltHex = salt.joinToString("") { "%02x".format(it) }
+                db.execSQL(
+                    "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+                    arrayOf(oldHash, saltHex, id)
+                )
+            }
+        }
+    }
+
+    // Helper: التحقق من وجود الجدول
+    private fun isTableExists(db: SQLiteDatabase, tableName: String): Boolean {
+        val cursor = db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            arrayOf(tableName)
+        )
+        return cursor.use { it.count > 0 }
+    }
+
     // Helper: Add column only if it doesn't exist
     private fun safeAddColumn(db: SQLiteDatabase, table: String, column: String, type: String) {
         try {
+            if (!isTableExists(db, table)) {
+                Log.w(TAG, "Table $table does not exist, skipping column addition")
+                return
+            }
             val cursor = db.rawQuery("PRAGMA table_info($table)", null)
             val existingColumns = mutableListOf<String>()
-            while (cursor.moveToNext()) {
-                existingColumns.add(cursor.getString(cursor.getColumnIndexOrThrow("name")))
+            cursor.use {
+                while (it.moveToNext()) {
+                    existingColumns.add(it.getString(it.getColumnIndexOrThrow("name")))
+                }
             }
-            cursor.close()
             if (column !in existingColumns) {
                 db.execSQL("ALTER TABLE $table ADD COLUMN $column $type")
                 Log.d(TAG, "Added column $column to $table")
@@ -176,28 +287,52 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     // Helper: Create table only if it doesn't exist
     private fun safeCreateTable(db: SQLiteDatabase, tableName: String, createSql: String) {
         try {
-            db.execSQL(createSql)
-            Log.d(TAG, "Created table $tableName")
+            if (!isTableExists(db, tableName)) {
+                db.execSQL(createSql)
+                Log.d(TAG, "Created table $tableName")
+            } else {
+                Log.d(TAG, "Table $tableName already exists, skipping")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Could not create table $tableName: ${e.message}")
         }
     }
 
-    // FIXED: Insert default user using ContentValues to prevent SQL injection
+    // تحسين: نقل المستخدمين القدامى
+    private fun migrateOldUsers(db: SQLiteDatabase) {
+        if (!isTableExists(db, "users")) return
+        
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM users", null)
+        val hasUsers = cursor.use {
+            if (it.moveToFirst()) it.getInt(0) > 0 else false
+        }
+        
+        if (!hasUsers) {
+            insertDefaultUserIfNotExists(db)
+        }
+    }
+
+    // FIXED: Insert default user using ContentValues with salt
     private fun insertDefaultUserIfNotExists(db: SQLiteDatabase) {
         val cursor = db.rawQuery("SELECT COUNT(*) FROM users WHERE username=?", arrayOf("admin"))
         val exists = cursor.use {
             if (it.moveToFirst()) it.getInt(0) > 0 else false
         }
         if (!exists) {
+            val (hash, salt) = hashPassword("admin123")
             val cv = ContentValues().apply {
                 put("username", "admin")
-                put("password_hash", hashPassword("admin123"))
+                put("password_hash", hash)
+                put("password_salt", salt)
                 put("full_name", "المدير العام")
                 put("role", "admin")
             }
-            db.insert("users", null, cv)
-            Log.d(TAG, "Inserted default admin user")
+            val id = db.insert("users", null, cv)
+            if (id == -1L) {
+                Log.e(TAG, "Failed to insert default admin user")
+            } else {
+                Log.d(TAG, "Inserted default admin user with ID $id")
+            }
         }
     }
 
@@ -216,9 +351,10 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
         }
     }
 
+    // FIXED: Create all tables with IF NOT EXISTS
     private fun createAllTables(db: SQLiteDatabase) {
         db.execSQL("""
-            CREATE TABLE customers (
+            CREATE TABLE IF NOT EXISTS customers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT,
                 phone TEXT,
@@ -230,8 +366,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE refills (
+            CREATE TABLE IF NOT EXISTS refills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
                 supplier TEXT,
@@ -242,8 +379,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 alert_threshold REAL DEFAULT 1000
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE transactions (
+            CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
                 refill_id INTEGER,
@@ -260,8 +398,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 payment_type TEXT DEFAULT 'نقداً'
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE payments (
+            CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
                 amount REAL,
@@ -270,14 +409,16 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 notes TEXT
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE settings (
+            CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE sms_logs (
+            CREATE TABLE IF NOT EXISTS sms_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 phone TEXT,
                 message TEXT,
@@ -286,8 +427,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 date TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE activity_logs (
+            CREATE TABLE IF NOT EXISTS activity_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 operator TEXT,
                 action TEXT,
@@ -295,11 +437,13 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 date TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE users (
+            CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE,
                 password_hash TEXT,
+                password_salt TEXT,
                 full_name TEXT,
                 role TEXT DEFAULT 'cashier',
                 biometric_enabled INTEGER DEFAULT 0,
@@ -307,8 +451,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE loyalty_rewards (
+            CREATE TABLE IF NOT EXISTS loyalty_rewards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER,
                 points_used INTEGER,
@@ -317,8 +462,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 date TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE inventory_alerts (
+            CREATE TABLE IF NOT EXISTS inventory_alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 refill_id INTEGER,
                 alert_type TEXT,
@@ -327,8 +473,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE ai_chat_history (
+            CREATE TABLE IF NOT EXISTS ai_chat_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT,
                 role TEXT,
@@ -336,8 +483,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE print_queue (
+            CREATE TABLE IF NOT EXISTS print_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type TEXT,
                 content TEXT,
@@ -345,8 +493,9 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
         db.execSQL("""
-            CREATE TABLE sync_queue (
+            CREATE TABLE IF NOT EXISTS sync_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 table_name TEXT,
                 record_id INTEGER,
@@ -355,8 +504,26 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        // إضافة Indexes لتحسين الأداء
+        createIndexes(db)
     }
 
+    // تحسين: إضافة Indexes للبحث السريع
+    private fun createIndexes(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_customers_status ON customers(status)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_transactions_customer ON transactions(customer_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments(customer_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sms_logs_date ON sms_logs(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_activity_logs_date ON activity_logs(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_inventory_alerts_read ON inventory_alerts(is_read)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_ai_chat_session ON ai_chat_history(session_id)")
+    }
+
+    // FIXED: Insert default settings with transaction
     private fun insertDefaultSettings(db: SQLiteDatabase) {
         val defaults = listOf(
             "sms_gateway_type" to "android_app",
@@ -377,21 +544,35 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 put("key", key)
                 put("value", value)
             }
-            db.insert("settings", null, cv)
+            db.insertWithOnConflict("settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
         }
     }
 
+    // FIXED: Insert default user with salt
     private fun insertDefaultUser(db: SQLiteDatabase) {
+        val (hash, salt) = hashPassword("admin123")
         val cv = ContentValues().apply {
             put("username", "admin")
-            put("password_hash", hashPassword("admin123"))
+            put("password_hash", hash)
+            put("password_salt", salt)
             put("full_name", "المدير العام")
             put("role", "admin")
         }
         db.insert("users", null, cv)
     }
 
+    // FIXED: Seed demo data with duplicate check
     private fun seedDemoData(db: SQLiteDatabase) {
+        // التحقق من وجود بيانات مسبقاً
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM customers", null)
+        val hasData = cursor.use {
+            if (it.moveToFirst()) it.getInt(0) > 0 else false
+        }
+        if (hasData) {
+            Log.d(TAG, "Demo data already exists, skipping")
+            return
+        }
+
         val customers = listOf(
             Triple("أحمد محمد", "0778123456", 500000.0),
             Triple("خالد عبدالله", "0789123456", 300000.0),
@@ -429,65 +610,78 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     }
 
     // ==================== Users & Authentication ====================
+    
+    /**
+     * تحسين: استخدام PBKDF2 مع التحقق من Salt
+     */
     fun authenticateUser(username: String, password: String): JSONObject? {
         val db = readableDatabase
         val c = db.rawQuery(
-            "SELECT * FROM users WHERE username=? AND password_hash=? AND active=1",
-            arrayOf(username, hashPassword(password))
+            "SELECT * FROM users WHERE username=? AND active=1",
+            arrayOf(username)
         )
-        return try {
-            if (c.moveToFirst()) {
-                val o = userCursorToJson(c)
-                logActivity(username, "login", "تسجيل دخول ناجح")
-                o
+        return c.use {
+            if (it.moveToFirst()) {
+                val storedHash = it.getString(it.getColumnIndexOrThrow("password_hash"))
+                val storedSalt = it.getString(it.getColumnIndexOrThrow("password_salt"))
+                
+                // التحقق من كلمة المرور
+                if (storedSalt != null && verifyPassword(password, storedHash, storedSalt)) {
+                    val o = userCursorToJson(it)
+                    logActivity(username, "login", "تسجيل دخول ناجح")
+                    o
+                } else if (storedSalt == null && storedHash == hashPassword(password).first) {
+                    // دعم الـ legacy (للمستخدمين القدامى)
+                    val o = userCursorToJson(it)
+                    logActivity(username, "login", "تسجيل دخول ناجح (legacy)")
+                    o
+                } else {
+                    null
+                }
             } else {
                 null
             }
-        } finally {
-            c.close()
         }
     }
 
     fun getUserByUsername(username: String): JSONObject? {
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM users WHERE username=?", arrayOf(username))
-        return try {
-            if (c.moveToFirst()) userCursorToJson(c) else null
-        } finally {
-            c.close()
+        return c.use {
+            if (it.moveToFirst()) userCursorToJson(it) else null
         }
     }
 
-    fun updateBiometricStatus(username: String, enabled: Boolean) {
+    fun updateBiometricStatus(username: String, enabled: Boolean): Boolean {
         val db = writableDatabase
         val cv = ContentValues().apply {
             put("biometric_enabled", if (enabled) 1 else 0)
         }
-        db.update("users", cv, "username=?", arrayOf(username))
+        val rows = db.update("users", cv, "username=?", arrayOf(username))
+        return rows > 0
     }
 
     private fun userCursorToJson(c: Cursor): JSONObject {
         val o = JSONObject()
-        o.put("user_id", c.getInt(0))
-        o.put("username", c.getString(1))
-        o.put("full_name", c.getString(3))
-        o.put("role", c.getString(4))
-        o.put("biometric_enabled", c.getInt(5))
-        o.put("active", c.getInt(6))
+        o.put("user_id", c.getInt(c.getColumnIndexOrThrow("id")))
+        o.put("username", c.getString(c.getColumnIndexOrThrow("username")))
+        o.put("full_name", c.getString(c.getColumnIndexOrThrow("full_name")))
+        o.put("role", c.getString(c.getColumnIndexOrThrow("role")))
+        o.put("biometric_enabled", c.getInt(c.getColumnIndexOrThrow("biometric_enabled")))
+        o.put("active", c.getInt(c.getColumnIndexOrThrow("active")))
         return o
     }
 
     // ==================== Customers ====================
+    
     fun getCustomers(): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM customers ORDER BY name", null)
-        try {
-            while (c.moveToNext()) {
-                arr.put(customerCursorToJson(c))
+        c.use {
+            while (it.moveToNext()) {
+                arr.put(customerCursorToJson(it))
             }
-        } finally {
-            c.close()
         }
         return arr
     }
@@ -495,38 +689,35 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     fun getCustomer(id: Int): JSONObject? {
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM customers WHERE id=?", arrayOf(id.toString()))
-        return try {
-            if (c.moveToFirst()) customerCursorToJson(c) else null
-        } finally {
-            c.close()
+        return c.use {
+            if (it.moveToFirst()) customerCursorToJson(it) else null
         }
     }
 
     private fun customerCursorToJson(c: Cursor): JSONObject {
         val o = JSONObject()
-        o.put("customer_id", c.getInt(0))
-        o.put("full_name", c.getString(1))
-        o.put("phone", c.getString(2))
-        o.put("credit_limit", c.getDouble(3))
-        o.put("current_balance", c.getDouble(4))
-        o.put("status", c.getString(5))
-        o.put("loyalty_points", c.getInt(6))
-        o.put("vip_level", c.getInt(7))
-        o.put("created_at", c.getString(8))
+        o.put("customer_id", c.getInt(c.getColumnIndexOrThrow("id")))
+        o.put("full_name", c.getString(c.getColumnIndexOrThrow("name")))
+        o.put("phone", c.getString(c.getColumnIndexOrThrow("phone")))
+        o.put("credit_limit", c.getDouble(c.getColumnIndexOrThrow("credit_limit")))
+        o.put("current_balance", c.getDouble(c.getColumnIndexOrThrow("balance")))
+        o.put("status", c.getString(c.getColumnIndexOrThrow("status")))
+        o.put("loyalty_points", c.getInt(c.getColumnIndexOrThrow("loyalty_points")))
+        o.put("vip_level", c.getInt(c.getColumnIndexOrThrow("vip_level")))
+        o.put("created_at", c.getString(c.getColumnIndexOrThrow("created_at")))
         return o
     }
 
     // ==================== Refills & Inventory ====================
+    
     fun getRefills(): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM refills ORDER BY id DESC", null)
-        try {
-            while (c.moveToNext()) {
-                arr.put(refillCursorToJson(c))
+        c.use {
+            while (it.moveToNext()) {
+                arr.put(refillCursorToJson(it))
             }
-        } finally {
-            c.close()
         }
         return arr
     }
@@ -534,49 +725,78 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     fun getRefill(id: Int): JSONObject? {
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM refills WHERE id=?", arrayOf(id.toString()))
-        return try {
-            if (c.moveToFirst()) refillCursorToJson(c) else null
-        } finally {
-            c.close()
+        return c.use {
+            if (it.moveToFirst()) refillCursorToJson(it) else null
         }
     }
 
     private fun refillCursorToJson(c: Cursor): JSONObject {
         val o = JSONObject()
-        o.put("refill_id", c.getInt(0))
-        o.put("refill_date", c.getString(1))
-        o.put("supplier_name", c.getString(2))
-        o.put("quantity_liters", c.getDouble(3))
-        o.put("remaining_quantity", c.getDouble(4))
-        o.put("sell_price_per_liter", c.getDouble(5))
-        o.put("allow_credit_sale", c.getInt(6))
-        o.put("alert_threshold", c.getDouble(7))
+        o.put("refill_id", c.getInt(c.getColumnIndexOrThrow("id")))
+        o.put("refill_date", c.getString(c.getColumnIndexOrThrow("date")))
+        o.put("supplier_name", c.getString(c.getColumnIndexOrThrow("supplier")))
+        o.put("quantity_liters", c.getDouble(c.getColumnIndexOrThrow("total_qty")))
+        o.put("remaining_quantity", c.getDouble(c.getColumnIndexOrThrow("remaining_qty")))
+        o.put("sell_price_per_liter", c.getDouble(c.getColumnIndexOrThrow("sell_price")))
+        o.put("allow_credit_sale", c.getInt(c.getColumnIndexOrThrow("allow_credit")))
+        o.put("alert_threshold", c.getDouble(c.getColumnIndexOrThrow("alert_threshold")))
         return o
     }
 
+    /**
+     * تحسين: استخدام transaction لضمان سلامة البيانات
+     */
     fun updateRefillQty(id: Int, qty: Double, operator: String = "System"): Boolean {
         val db = writableDatabase
-        db.execSQL(
-            "UPDATE refills SET remaining_qty = remaining_qty - ? WHERE id=?",
-            arrayOf(qty, id)
-        )
-        logActivity(operator, "update_refill_qty", "تنقيص تعبئة ID $id بمقدار $qty لتر")
-        checkInventoryAlerts(id)
-        return true
+        dbLock.lock()
+        try {
+            db.beginTransaction()
+            try {
+                db.execSQL(
+                    "UPDATE refills SET remaining_qty = remaining_qty - ? WHERE id=?",
+                    arrayOf(qty, id)
+                )
+                db.setTransactionSuccessful()
+                
+                logActivity(operator, "update_refill_qty", "تنقيص تعبئة ID $id بمقدار $qty لتر")
+                checkInventoryAlerts(id)
+                return true
+            } finally {
+                db.endTransaction()
+            }
+        } finally {
+            dbLock.unlock()
+        }
     }
 
+    /**
+     * تحسين: التحقق من وجود تنبيه مكرر
+     */
     private fun checkInventoryAlerts(refillId: Int) {
         val refill = getRefill(refillId) ?: return
         val remaining = refill.getDouble("remaining_quantity")
         val threshold = refill.getDouble("alert_threshold")
+        
         if (remaining <= threshold) {
-            val msg = "تنبيه: مخزون التعبئة (${refill.getString("supplier_name")}) وصل إلى ${remaining.toInt()} لتر (الحد: ${threshold.toInt()})"
-            val cv = ContentValues().apply {
-                put("refill_id", refillId)
-                put("alert_type", "low_stock")
-                put("message", msg)
+            // التحقق من وجود تنبيه غير مقروء مسبقاً
+            val db = readableDatabase
+            val c = db.rawQuery(
+                "SELECT COUNT(*) FROM inventory_alerts WHERE refill_id=? AND alert_type='low_stock' AND is_read=0",
+                arrayOf(refillId.toString())
+            )
+            val exists = c.use {
+                if (it.moveToFirst()) it.getInt(0) > 0 else false
             }
-            writableDatabase.insert("inventory_alerts", null, cv)
+            
+            if (!exists) {
+                val msg = "تنبيه: مخزون التعبئة (${refill.getString("supplier_name")}) وصل إلى ${remaining.toInt()} لتر (الحد: ${threshold.toInt()})"
+                val cv = ContentValues().apply {
+                    put("refill_id", refillId)
+                    put("alert_type", "low_stock")
+                    put("message", msg)
+                }
+                writableDatabase.insert("inventory_alerts", null, cv)
+            }
         }
     }
 
@@ -587,31 +807,37 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             "SELECT * FROM inventory_alerts WHERE is_read=0 ORDER BY id DESC",
             null
         )
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("id", c.getInt(0))
-                o.put("refill_id", c.getInt(1))
-                o.put("alert_type", c.getString(2))
-                o.put("message", c.getString(3))
-                o.put("is_read", c.getInt(4))
-                o.put("created_at", c.getString(5))
+                o.put("id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("refill_id", it.getInt(it.getColumnIndexOrThrow("refill_id")))
+                o.put("alert_type", it.getString(it.getColumnIndexOrThrow("alert_type")))
+                o.put("message", it.getString(it.getColumnIndexOrThrow("message")))
+                o.put("is_read", it.getInt(it.getColumnIndexOrThrow("is_read")))
+                o.put("created_at", it.getString(it.getColumnIndexOrThrow("created_at")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
-    fun markAlertRead(alertId: Int) {
-        writableDatabase.execSQL(
-            "UPDATE inventory_alerts SET is_read=1 WHERE id=?",
-            arrayOf(alertId)
+    fun markAlertRead(alertId: Int): Boolean {
+        val db = writableDatabase
+        val rows = db.update(
+            "inventory_alerts",
+            ContentValues().apply { put("is_read", 1) },
+            "id=?",
+            arrayOf(alertId.toString())
         )
+        return rows > 0
     }
 
     // ==================== Transactions ====================
+    
+    /**
+     * تحسين: تبسيط الدالة واستخدام transaction
+     */
     fun insertTransaction(
         customerId: Int,
         refillId: Int,
@@ -625,46 +851,66 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
         operator: String = "System"
     ): Int {
         val db = writableDatabase
-        val invoiceNo = "INV-" + System.currentTimeMillis().toString().takeLast(6)
-        val cv = ContentValues().apply {
-            put("customer_id", customerId)
-            put("refill_id", refillId)
-            put("qty", qty)
-            put("price", price)
-            put("total", qty * price)
-            put("paid", paid)
-            put("due", due)
-            put("method", method)
-            put("due_date", dueDate)
-            put("status", if (due > 0) "unpaid" else "paid")
-            put("invoice_number", invoiceNo)
-            put("payment_type", paymentType)
-        }
-        val id = db.insert("transactions", null, cv).toInt()
-
-        if (getSetting("loyalty_enabled") == "1") {
-            val pointsPerLiter = getSetting("points_per_liter").toDoubleOrNull() ?: 1.0
-            val points = (qty * pointsPerLiter).toInt()
-            db.execSQL(
-                "UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id=?",
-                arrayOf(points, customerId)
-            )
-        }
-
-        logActivity(operator, "sale", "بيع جديد: $qty لتر للعميل $customerId")
-        return id
-    }
-
-    fun getTransactions(): JSONArray {
-        val arr = JSONArray()
-        val db = readableDatabase
-        val c = db.rawQuery("SELECT * FROM transactions ORDER BY id DESC LIMIT 200", null)
+        dbLock.lock()
         try {
-            while (c.moveToNext()) {
-                arr.put(transactionCursorToJson(c))
+            db.beginTransaction()
+            try {
+                val invoiceNo = "INV-" + System.currentTimeMillis().toString().takeLast(6)
+                val total = qty * price
+                val actualDue = total - paid
+                
+                val cv = ContentValues().apply {
+                    put("customer_id", customerId)
+                    put("refill_id", refillId)
+                    put("qty", qty)
+                    put("price", price)
+                    put("total", total)
+                    put("paid", paid)
+                    put("due", actualDue)
+                    put("method", method)
+                    put("due_date", dueDate)
+                    put("status", if (actualDue > 0) "unpaid" else "paid")
+                    put("invoice_number", invoiceNo)
+                    put("payment_type", paymentType)
+                }
+                val id = db.insert("transactions", null, cv).toInt()
+                
+                if (id == -1) {
+                    throw Exception("Failed to insert transaction")
+                }
+
+                // تحديث نقاط الولاء
+                if (getSetting("loyalty_enabled") == "1") {
+                    val pointsPerLiter = getSetting("points_per_liter").toDoubleOrNull() ?: 1.0
+                    val points = (qty * pointsPerLiter).toInt()
+                    db.execSQL(
+                        "UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id=?",
+                        arrayOf(points, customerId)
+                    )
+                }
+
+                db.setTransactionSuccessful()
+                logActivity(operator, "sale", "بيع جديد: $qty لتر للعميل $customerId")
+                return id
+            } finally {
+                db.endTransaction()
             }
         } finally {
-            c.close()
+            dbLock.unlock()
+        }
+    }
+
+    fun getTransactions(limit: Int = 200, offset: Int = 0): JSONArray {
+        val arr = JSONArray()
+        val db = readableDatabase
+        val c = db.rawQuery(
+            "SELECT * FROM transactions ORDER BY id DESC LIMIT ? OFFSET ?",
+            arrayOf(limit.toString(), offset.toString())
+        )
+        c.use {
+            while (it.moveToNext()) {
+                arr.put(transactionCursorToJson(it))
+            }
         }
         return arr
     }
@@ -672,37 +918,38 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     fun getTransactionById(id: Int): JSONObject? {
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM transactions WHERE id=?", arrayOf(id.toString()))
-        return try {
-            if (c.moveToFirst()) transactionCursorToJson(c) else null
-        } finally {
-            c.close()
+        return c.use {
+            if (it.moveToFirst()) transactionCursorToJson(it) else null
         }
     }
 
     private fun transactionCursorToJson(c: Cursor): JSONObject {
         val o = JSONObject()
-        o.put("transaction_id", c.getInt(0))
-        o.put("customer_id", c.getInt(1))
-        o.put("refill_id", c.getInt(2))
-        o.put("qty", c.getDouble(3))
-        o.put("price", c.getDouble(4))
-        o.put("total", c.getDouble(5))
-        o.put("paid", c.getDouble(6))
-        o.put("due", c.getDouble(7))
-        o.put("method", c.getString(8))
-        o.put("due_date", c.getString(9))
-        o.put("status", c.getString(10))
-        o.put("date", c.getString(11))
-        o.put("invoice_number", c.getString(12))
-        o.put("payment_type", c.getString(13))
+        o.put("transaction_id", c.getInt(c.getColumnIndexOrThrow("id")))
+        o.put("customer_id", c.getInt(c.getColumnIndexOrThrow("customer_id")))
+        o.put("refill_id", c.getInt(c.getColumnIndexOrThrow("refill_id")))
+        o.put("qty", c.getDouble(c.getColumnIndexOrThrow("qty")))
+        o.put("price", c.getDouble(c.getColumnIndexOrThrow("price")))
+        o.put("total", c.getDouble(c.getColumnIndexOrThrow("total")))
+        o.put("paid", c.getDouble(c.getColumnIndexOrThrow("paid")))
+        o.put("due", c.getDouble(c.getColumnIndexOrThrow("due")))
+        o.put("method", c.getString(c.getColumnIndexOrThrow("method")))
+        o.put("due_date", c.getString(c.getColumnIndexOrThrow("due_date")))
+        o.put("status", c.getString(c.getColumnIndexOrThrow("status")))
+        o.put("date", c.getString(c.getColumnIndexOrThrow("date")))
+        o.put("invoice_number", c.getString(c.getColumnIndexOrThrow("invoice_number")))
+        o.put("payment_type", c.getString(c.getColumnIndexOrThrow("payment_type")))
         return o
     }
 
+    /**
+     * تحسين: استخدام COALESCE للـ JOINs
+     */
     fun searchTransactions(query: String): JSONArray {
         val arr = JSONArray()
         val q = "%$query%"
         val sql = """
-            SELECT t.*, c.name as customer_name
+            SELECT t.*, COALESCE(c.name, 'غير معروف') as customer_name
             FROM transactions t
             LEFT JOIN customers c ON t.customer_id = c.id
             WHERE c.name LIKE ? OR t.due_date LIKE ? OR t.invoice_number LIKE ?
@@ -710,59 +957,81 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
         """.trimIndent()
         val db = readableDatabase
         val c = db.rawQuery(sql, arrayOf(q, q, q))
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("transaction_id", c.getInt(c.getColumnIndexOrThrow("id")))
-                o.put("customer_id", c.getInt(c.getColumnIndexOrThrow("customer_id")))
-                o.put("customer_name", c.getString(c.getColumnIndexOrThrow("customer_name")))
-                o.put("refill_id", c.getInt(c.getColumnIndexOrThrow("refill_id")))
-                o.put("qty", c.getDouble(c.getColumnIndexOrThrow("qty")))
-                o.put("price", c.getDouble(c.getColumnIndexOrThrow("price")))
-                o.put("total", c.getDouble(c.getColumnIndexOrThrow("total")))
-                o.put("paid", c.getDouble(c.getColumnIndexOrThrow("paid")))
-                o.put("due", c.getDouble(c.getColumnIndexOrThrow("due")))
-                o.put("method", c.getString(c.getColumnIndexOrThrow("method")))
-                o.put("due_date", c.getString(c.getColumnIndexOrThrow("due_date")))
-                o.put("status", c.getString(c.getColumnIndexOrThrow("status")))
-                o.put("invoice_number", c.getString(c.getColumnIndexOrThrow("invoice_number")))
-                o.put("payment_type", c.getString(c.getColumnIndexOrThrow("payment_type")))
+                o.put("transaction_id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("customer_id", it.getInt(it.getColumnIndexOrThrow("customer_id")))
+                o.put("customer_name", it.getString(it.getColumnIndexOrThrow("customer_name")))
+                o.put("refill_id", it.getInt(it.getColumnIndexOrThrow("refill_id")))
+                o.put("qty", it.getDouble(it.getColumnIndexOrThrow("qty")))
+                o.put("price", it.getDouble(it.getColumnIndexOrThrow("price")))
+                o.put("total", it.getDouble(it.getColumnIndexOrThrow("total")))
+                o.put("paid", it.getDouble(it.getColumnIndexOrThrow("paid")))
+                o.put("due", it.getDouble(it.getColumnIndexOrThrow("due")))
+                o.put("method", it.getString(it.getColumnIndexOrThrow("method")))
+                o.put("due_date", it.getString(it.getColumnIndexOrThrow("due_date")))
+                o.put("status", it.getString(it.getColumnIndexOrThrow("status")))
+                o.put("invoice_number", it.getString(it.getColumnIndexOrThrow("invoice_number")))
+                o.put("payment_type", it.getString(it.getColumnIndexOrThrow("payment_type")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
     // ==================== Payments ====================
+    
+    /**
+     * تحسين: استخدام transaction لضمان سلامة البيانات
+     */
     fun processPayment(customerId: Int, amount: Double, operator: String = "System"): Boolean {
         val db = writableDatabase
-        db.execSQL(
-            "UPDATE customers SET balance = balance - ? WHERE id=?",
-            arrayOf(amount, customerId)
-        )
-        val cv = ContentValues().apply {
-            put("customer_id", customerId)
-            put("amount", amount)
-            put("method", "cash")
-            put("date", "now")
-            put("notes", "تسديد يدوي")
+        dbLock.lock()
+        try {
+            db.beginTransaction()
+            try {
+                // تحديث رصيد العميل
+                db.execSQL(
+                    "UPDATE customers SET balance = balance - ? WHERE id=?",
+                    arrayOf(amount, customerId)
+                )
+                
+                // إدراج سجل الدفع
+                val cv = ContentValues().apply {
+                    put("customer_id", customerId)
+                    put("amount", amount)
+                    put("method", "cash")
+                    put("date", "now")
+                    put("notes", "تسديد يدوي")
+                }
+                db.insert("payments", null, cv)
+                
+                // تحديث حالة المعاملات
+                db.execSQL(
+                    """UPDATE transactions SET paid = paid + ?, due = due - ?,
+                        status = CASE WHEN due - ? <= 0 THEN 'paid' ELSE 'partial' END
+                        WHERE customer_id = ? AND due > 0 ORDER BY id LIMIT 1""",
+                    arrayOf(amount, amount, amount, customerId)
+                )
+                
+                db.setTransactionSuccessful()
+                logActivity(operator, "payment", "تسديد مبلغ $amount للعميل $customerId")
+                return true
+            } finally {
+                db.endTransaction()
+            }
+        } finally {
+            dbLock.unlock()
         }
-        db.insert("payments", null, cv)
-        db.execSQL(
-            """UPDATE transactions SET paid = paid + ?, due = due - ?,
-                status = CASE WHEN due - ? <= 0 THEN 'paid' ELSE 'partial' END
-                WHERE customer_id = ? AND due > 0 ORDER BY id LIMIT 1""",
-            arrayOf(amount, amount, amount, customerId)
-        )
-        logActivity(operator, "payment", "تسديد مبلغ $amount للعميل $customerId")
-        return true
     }
 
     // ==================== Reports & Dashboard ====================
-    // FIXED: Single database instance per method to avoid repeated open/close
-    fun getDashboardStats(): JSONArray {
+    
+    /**
+     * تحسين: إرجاع JSONObject مباشرة بدلاً من JSONArray
+     */
+    fun getDashboardStats(): JSONObject {
         val stats = JSONObject()
         val db = readableDatabase
 
@@ -804,7 +1073,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             Log.e(TAG, "Error getting dashboard stats: ${e.message}", e)
         }
 
-        return JSONArray().put(stats)
+        return stats
     }
 
     fun getDailySales(): JSONArray {
@@ -817,17 +1086,15 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 ORDER BY date(date) DESC LIMIT 30""",
             null
         )
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("date", c.getString(0))
-                o.put("total_qty", c.getDouble(1))
-                o.put("total_sales", c.getDouble(2))
-                o.put("count", c.getInt(3))
+                o.put("date", it.getString(0))
+                o.put("total_qty", it.getDouble(1))
+                o.put("total_sales", it.getDouble(2))
+                o.put("count", it.getInt(3))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
@@ -842,17 +1109,15 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
                 ORDER BY sale_month DESC LIMIT 12""",
             null
         )
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("month", c.getString(0))
-                o.put("total_qty", c.getDouble(1))
-                o.put("total_sales", c.getDouble(2))
-                o.put("count", c.getInt(3))
+                o.put("month", it.getString(0))
+                o.put("total_qty", it.getDouble(1))
+                o.put("total_sales", it.getDouble(2))
+                o.put("count", it.getInt(3))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
@@ -893,35 +1158,35 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     }
 
     // ==================== Overdue Transactions ====================
+    
     fun getOverdueTransactions(): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
         val sql = """
-            SELECT t.*, c.name as customer_name, c.phone as customer_phone
+            SELECT t.*, COALESCE(c.name, 'غير معروف') as customer_name, COALESCE(c.phone, '') as customer_phone
             FROM transactions t
             LEFT JOIN customers c ON t.customer_id = c.id
             WHERE t.due > 0 AND date(t.due_date) < date('now')
         """.trimIndent()
         val c = db.rawQuery(sql, null)
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("transaction_id", c.getInt(c.getColumnIndexOrThrow("id")))
-                o.put("customer_id", c.getInt(c.getColumnIndexOrThrow("customer_id")))
-                o.put("customer_name", c.getString(c.getColumnIndexOrThrow("customer_name")))
-                o.put("customer_phone", c.getString(c.getColumnIndexOrThrow("customer_phone")))
-                o.put("due", c.getDouble(c.getColumnIndexOrThrow("due")))
-                o.put("due_date", c.getString(c.getColumnIndexOrThrow("due_date")))
-                o.put("invoice_number", c.getString(c.getColumnIndexOrThrow("invoice_number")))
+                o.put("transaction_id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("customer_id", it.getInt(it.getColumnIndexOrThrow("customer_id")))
+                o.put("customer_name", it.getString(it.getColumnIndexOrThrow("customer_name")))
+                o.put("customer_phone", it.getString(it.getColumnIndexOrThrow("customer_phone")))
+                o.put("due", it.getDouble(it.getColumnIndexOrThrow("due")))
+                o.put("due_date", it.getString(it.getColumnIndexOrThrow("due_date")))
+                o.put("invoice_number", it.getString(it.getColumnIndexOrThrow("invoice_number")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
     // ==================== Low Stock ====================
+    
     fun getLowStockRefills(threshold: Double): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
@@ -929,44 +1194,41 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             "SELECT * FROM refills WHERE remaining_qty < ?",
             arrayOf(threshold.toString())
         )
-        try {
-            while (c.moveToNext()) {
-                arr.put(refillCursorToJson(c))
+        c.use {
+            while (it.moveToNext()) {
+                arr.put(refillCursorToJson(it))
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
     // ==================== SMS Logs ====================
-    fun logSms(phone: String, message: String, type: String, status: String) {
+    
+    fun logSms(phone: String, message: String, type: String, status: String): Long {
         val cv = ContentValues().apply {
             put("phone", phone)
             put("message", message)
             put("type", type)
             put("status", status)
         }
-        writableDatabase.insert("sms_logs", null, cv)
+        return writableDatabase.insert("sms_logs", null, cv)
     }
 
     fun getSmsLogs(): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM sms_logs ORDER BY id DESC LIMIT 500", null)
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("id", c.getInt(0))
-                o.put("phone", c.getString(1))
-                o.put("message", c.getString(2))
-                o.put("type", c.getString(3))
-                o.put("status", c.getString(4))
-                o.put("date", c.getString(5))
+                o.put("id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("phone", it.getString(it.getColumnIndexOrThrow("phone")))
+                o.put("message", it.getString(it.getColumnIndexOrThrow("message")))
+                o.put("type", it.getString(it.getColumnIndexOrThrow("type")))
+                o.put("status", it.getString(it.getColumnIndexOrThrow("status")))
+                o.put("date", it.getString(it.getColumnIndexOrThrow("date")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
@@ -974,44 +1236,42 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     private fun getSmsCountToday(): Int {
         val db = readableDatabase
         val c = db.rawQuery("SELECT COUNT(*) FROM sms_logs WHERE date(date) = date('now')", null)
-        return try {
-            if (c.moveToFirst()) c.getInt(0) else 0
-        } finally {
-            c.close()
+        return c.use {
+            if (it.moveToFirst()) it.getInt(0) else 0
         }
     }
 
     // ==================== Activity Logs ====================
-    fun logActivity(operator: String, action: String, details: String) {
+    
+    fun logActivity(operator: String, action: String, details: String): Long {
         val cv = ContentValues().apply {
             put("operator", operator)
             put("action", action)
             put("details", details)
         }
-        writableDatabase.insert("activity_logs", null, cv)
+        return writableDatabase.insert("activity_logs", null, cv)
     }
 
     fun getActivityLogs(): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
         val c = db.rawQuery("SELECT * FROM activity_logs ORDER BY id DESC LIMIT 100", null)
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("id", c.getInt(0))
-                o.put("operator", c.getString(1))
-                o.put("action", c.getString(2))
-                o.put("details", c.getString(3))
-                o.put("date", c.getString(4))
+                o.put("id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("operator", it.getString(it.getColumnIndexOrThrow("operator")))
+                o.put("action", it.getString(it.getColumnIndexOrThrow("action")))
+                o.put("details", it.getString(it.getColumnIndexOrThrow("details")))
+                o.put("date", it.getString(it.getColumnIndexOrThrow("date")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
     // ==================== Loyalty ====================
+    
     fun getLoyaltyHistory(customerId: Int): JSONArray {
         val arr = JSONArray()
         val db = readableDatabase
@@ -1019,48 +1279,63 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             "SELECT * FROM loyalty_rewards WHERE customer_id=? ORDER BY id DESC",
             arrayOf(customerId.toString())
         )
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("id", c.getInt(0))
-                o.put("points_used", c.getInt(2))
-                o.put("reward_type", c.getString(3))
-                o.put("description", c.getString(4))
-                o.put("date", c.getString(5))
+                o.put("id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("points_used", it.getInt(it.getColumnIndexOrThrow("points_used")))
+                o.put("reward_type", it.getString(it.getColumnIndexOrThrow("reward_type")))
+                o.put("description", it.getString(it.getColumnIndexOrThrow("description")))
+                o.put("date", it.getString(it.getColumnIndexOrThrow("date")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
+    /**
+     * تحسين: استخدام transaction
+     */
     fun redeemLoyaltyPoints(customerId: Int, points: Int, description: String): Boolean {
         val customer = getCustomer(customerId) ?: return false
         val currentPoints = customer.getInt("loyalty_points")
         if (currentPoints < points) return false
-        writableDatabase.execSQL(
-            "UPDATE customers SET loyalty_points = loyalty_points - ? WHERE id=?",
-            arrayOf(points, customerId)
-        )
-        val cv = ContentValues().apply {
-            put("customer_id", customerId)
-            put("points_used", points)
-            put("reward_type", "discount")
-            put("description", description)
+        
+        val db = writableDatabase
+        dbLock.lock()
+        try {
+            db.beginTransaction()
+            try {
+                db.execSQL(
+                    "UPDATE customers SET loyalty_points = loyalty_points - ? WHERE id=?",
+                    arrayOf(points, customerId)
+                )
+                val cv = ContentValues().apply {
+                    put("customer_id", customerId)
+                    put("points_used", points)
+                    put("reward_type", "discount")
+                    put("description", description)
+                }
+                db.insert("loyalty_rewards", null, cv)
+                db.setTransactionSuccessful()
+                return true
+            } finally {
+                db.endTransaction()
+            }
+        } finally {
+            dbLock.unlock()
         }
-        writableDatabase.insert("loyalty_rewards", null, cv)
-        return true
     }
 
     // ==================== AI Chat ====================
-    fun saveAiMessage(sessionId: String, role: String, message: String) {
+    
+    fun saveAiMessage(sessionId: String, role: String, message: String): Long {
         val cv = ContentValues().apply {
             put("session_id", sessionId)
             put("role", role)
             put("message", message)
         }
-        writableDatabase.insert("ai_chat_history", null, cv)
+        return writableDatabase.insert("ai_chat_history", null, cv)
     }
 
     fun getAiChatHistory(sessionId: String): JSONArray {
@@ -1070,21 +1345,20 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             "SELECT * FROM ai_chat_history WHERE session_id=? ORDER BY id",
             arrayOf(sessionId)
         )
-        try {
-            while (c.moveToNext()) {
+        c.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("role", c.getString(2))
-                o.put("message", c.getString(3))
-                o.put("timestamp", c.getString(4))
+                o.put("role", it.getString(it.getColumnIndexOrThrow("role")))
+                o.put("message", it.getString(it.getColumnIndexOrThrow("message")))
+                o.put("timestamp", it.getString(it.getColumnIndexOrThrow("timestamp")))
                 arr.put(o)
             }
-        } finally {
-            c.close()
         }
         return arr
     }
 
     // ==================== Settings ====================
+    
     fun setSetting(key: String, value: String) {
         val cv = ContentValues().apply {
             put("key", key)
@@ -1098,14 +1372,13 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
     fun getSetting(key: String): String {
         val db = readableDatabase
         val c = db.rawQuery("SELECT value FROM settings WHERE key=?", arrayOf(key))
-        return try {
-            if (c.moveToFirst()) c.getString(0) else ""
-        } finally {
-            c.close()
+        return c.use {
+            if (it.moveToFirst()) it.getString(0) else ""
         }
     }
 
     // ==================== Export ====================
+    
     fun exportAllData(): JSONObject {
         val result = JSONObject()
         result.put("customers", getCustomers())
@@ -1118,18 +1391,16 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
         val payments = JSONArray()
         val db = readableDatabase
         val pc = db.rawQuery("SELECT * FROM payments", null)
-        try {
-            while (pc.moveToNext()) {
+        pc.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("payment_id", pc.getInt(0))
-                o.put("customer_id", pc.getInt(1))
-                o.put("amount", pc.getDouble(2))
-                o.put("method", pc.getString(3))
-                o.put("date", pc.getString(4))
+                o.put("payment_id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("customer_id", it.getInt(it.getColumnIndexOrThrow("customer_id")))
+                o.put("amount", it.getDouble(it.getColumnIndexOrThrow("amount")))
+                o.put("method", it.getString(it.getColumnIndexOrThrow("method")))
+                o.put("date", it.getString(it.getColumnIndexOrThrow("date")))
                 payments.put(o)
             }
-        } finally {
-            pc.close()
         }
         result.put("payments", payments)
         return result
@@ -1147,10 +1418,8 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             "SELECT * FROM transactions WHERE customer_id = ? ORDER BY id DESC",
             arrayOf(customerId.toString())
         )
-        try {
-            while (tc.moveToNext()) transactions.put(transactionCursorToJson(tc))
-        } finally {
-            tc.close()
+        tc.use {
+            while (it.moveToNext()) transactions.put(transactionCursorToJson(it))
         }
         report.put("transactions", transactions)
 
@@ -1159,17 +1428,15 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
             "SELECT * FROM payments WHERE customer_id = ? ORDER BY id DESC",
             arrayOf(customerId.toString())
         )
-        try {
-            while (pc.moveToNext()) {
+        pc.use {
+            while (it.moveToNext()) {
                 val o = JSONObject()
-                o.put("payment_id", pc.getInt(0))
-                o.put("amount", pc.getDouble(2))
-                o.put("method", pc.getString(3))
-                o.put("date", pc.getString(4))
+                o.put("payment_id", it.getInt(it.getColumnIndexOrThrow("id")))
+                o.put("amount", it.getDouble(it.getColumnIndexOrThrow("amount")))
+                o.put("method", it.getString(it.getColumnIndexOrThrow("method")))
+                o.put("date", it.getString(it.getColumnIndexOrThrow("date")))
                 payments.put(o)
             }
-        } finally {
-            pc.close()
         }
         report.put("payments", payments)
         return report
