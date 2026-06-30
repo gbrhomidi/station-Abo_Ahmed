@@ -18,32 +18,24 @@ android {
         versionName = "2.0 Pro"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // REMOVED: abiFilters - let Android Studio handle all architectures
-        // This fixes emulator crashes on x86_64 devices
     }
 
-    signingConfigs {
-        create("release") {
-            storeFile = file("../my-upload-key.jks")
-            storePassword = System.getenv("STORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
-        }
-    }
+    // ✅ REMOVED: signingConfigs (causes BuildConfig errors when env vars are empty)
+    // Add it back ONLY when you have a real keystore and credentials
 
     buildTypes {
         release {
             isCrunchPngs = false
             isMinifyEnabled = false
-            signingConfig = signingConfigs["release"]
+            // ✅ REMOVED: signingConfig reference
+            // signingConfig = signingConfigs["release"]  // ← Add back when keystore is ready
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
         debug {
-            // no signing needed
+            isMinifyEnabled = false
         }
     }
 
@@ -62,6 +54,22 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    // ✅ ADDED: packaging options to resolve dependency conflicts
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/*.kotlin_module",
+                "META-INF/*.version",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "META-INF/LICENSE",
+                "META-INF/NOTICE",
+                "META-INF/DEPENDENCIES",
+                "META-INF/INDEX.LIST"
+            )
+        }
+    }
 }
 
 secrets {
@@ -69,8 +77,8 @@ secrets {
     defaultPropertiesFileName = ".env.example"
 }
 
+// ✅ ADDED: Resolve dependency version conflicts
 dependencies {
-    // Platforms
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.firebase.bom))
 
@@ -102,8 +110,11 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.retrofit)
 
-    // WorkManager for background tasks (NEW - replaces Timer)
+    // ✅ ADDED: WorkManager for background tasks (replaces Timer)
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // ✅ ADDED: AndroidX Biometric (supports API 14+, not just API 28+)
+    implementation("androidx.biometric:biometric:1.1.0")
 
     // Test Dependencies
     testImplementation(libs.androidx.compose.ui.test.junit4)
@@ -130,4 +141,16 @@ dependencies {
     // KSP (Annotation Processing)
     "ksp"(libs.androidx.room.compiler)
     "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// ✅ ADDED: Resolve dependency version conflicts
+configurations.all {
+    resolutionStrategy {
+        force("com.squareup.okhttp3:okhttp:4.10.0")
+        force("com.squareup.okio:okio:3.0.0")
+        force("com.squareup.okio:okio-jvm:3.0.0")
+        force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
+    }
 }
