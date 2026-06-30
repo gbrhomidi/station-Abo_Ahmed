@@ -25,6 +25,23 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
 
+      - name: Verify keystore
+        run: |
+          echo "===== CURRENT DIRECTORY ====="
+          pwd
+
+          echo
+          echo "===== FILES ====="
+          ls -lah
+
+          echo
+          echo "===== KEYSTORE INFO ====="
+          file my-upload-key.jks || true
+
+          echo
+          echo "===== KEYSTORE SIZE ====="
+          ls -lh my-upload-key.jks || true
+
       - name: Grant execute permission
         run: chmod +x gradlew
 
