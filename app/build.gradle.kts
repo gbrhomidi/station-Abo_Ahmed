@@ -11,27 +11,27 @@ android {
 
     defaultConfig {
         applicationId = "com.aistudio.dieselstationsms.kxmpzq"
-        minSdk = 26
+        minSdk = 26                      // ✅ تم الرفع إلى 26 (Android 8.0) لتفادي ثغرات الإصدارات القديمة
         targetSdk = 35
         versionCode = 3
         versionName = "2.1 Pro"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
-        // Security: Prevent backup of sensitive data
+        // تقييد الموارد لتحسين الأداء والأمان
         resConfigs("ar", "en")
     }
 
     buildTypes {
         release {
             isCrunchPngs = true
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = true       // ✅ تم التفعيل: يحجب الكود عن الهندسة العكسية عبر ProGuard/R8
+            isShrinkResources = true     // ✅ إزالة الموارد غير المستخدمة لتقليل الحجم والثغرات
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Security: Enable R8 full mode for better optimization
+            // تعطيل وضع التصحيح في الإصدار النهائي
             buildConfigField("boolean", "DEBUG_MODE", "false")
         }
         debug {
@@ -56,8 +56,7 @@ android {
 
     buildFeatures {
         compose = true
-        // Security: Disable BuildConfig to prevent API key exposure
-        buildConfig = false
+        buildConfig = false              // ✅ تعطيل BuildConfig لمنع تسرب المفاتيح الحساسة
     }
 
     composeOptions {
@@ -141,10 +140,10 @@ dependencies {
     // Biometric
     implementation("androidx.biometric:biometric:1.1.0")
     
-    // Security - EncryptedSharedPreferences
+    // ✅ أمان - تشفير البيانات الحساسة (EncryptedSharedPreferences)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
-    // Root Detection
+    // ✅ أمان - كشف أجهزة الروت (Root Detection)
     implementation("com.scottyab:rootbeer-lib:0.1.0")
     
     // NanoHTTPD (Local Server)
@@ -174,7 +173,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
-// Force resolution strategy to prevent version conflicts
+// حل تعارضات الإصدارات لضمان استخدام أحدث الإصلاحات الأمنية
 configurations.all {
     resolutionStrategy {
         force("com.squareup.okhttp3:okhttp:4.10.0")
@@ -184,13 +183,13 @@ configurations.all {
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
         
-        // Security: Force latest versions with security patches
+        // ✅ إجبار استخدام إصدارات آمنة
         force("org.nanohttpd:nanohttpd:2.3.1")
         force("androidx.core:core-ktx:1.15.0")
     }
 }
 
-// Security: Verify no sensitive data in APK
+// ✅ أمان - فحص آلي لمنع إدراج المفاتيح الحساسة في المستودع
 tasks.register<Exec>("securityCheck") {
     group = "verification"
     description = "Check for sensitive data in APK"
