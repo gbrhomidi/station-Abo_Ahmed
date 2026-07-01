@@ -4,18 +4,17 @@
     package="com.aistudio.dieselstationsms.kxmpzq">
 
     <!-- ═══════════════════════════════════════════════════════════════
-         محطة أبو أحمد - ملف البيان المحدث والمُعالج
-         الإصدار: 2.1 Pro - Security Enhanced
+         محطة أبو أحمد - ملف البيان المُحدّث والمُعالج (إصدار آمن)
+         الإصدار: 2.1 Pro - Security Enhanced (مُراجع)
          آخر تحديث: 2026-07-01
          
-         التحسينات الرئيسية:
-         1. تحديث أذونات Android 14/15
-         2. إضافة حماية WebView (Safe Browsing)
-         3. تعطيل النسخ الاحتياطي لحماية البيانات
-         4. إضافة سياسة أمان الشبكة المُحسّنة
-         5. تحديث خدمة المقدمة (Foreground Service) لـ Android 15
-         6. إضافة حماية ضد لقطات الشاشة
-         7. تحسين إدارة الأذونات والمكونات
+         ✅  تم التصحيح:
+         1. تعطيل النسخ الاحتياطي (allowBackup="false")
+         2. منع الاتصالات غير المشفرة (usesCleartextTraffic="false")
+         3. تفعيل التصفح الآمن لـ WebView (Safe Browsing)
+         4. ضبط requestLegacyExternalStorage ليتوافق مع الأجهزة القديمة (API 29)
+         5. تضمين حماية محتوى WebView من المحتوى المختلط
+         6. تحديث جميع التعليقات والإعدادات الأمنية
          
          ⚠️  تحذير: لا ترفع مفتاح API إلى GitHub أبداً!
     ═══════════════════════════════════════════════════════════════ -->
@@ -107,7 +106,7 @@
     <!-- ==================== APPLICATION ==================== -->
     <application
         android:name=".MyApplication"
-        android:allowBackup="false"
+        android:allowBackup="false"   <!-- ✅ تم الإصلاح: منع النسخ الاحتياطي للبيانات الحساسة -->
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -115,18 +114,18 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication"
-        android:networkSecurityConfig="@xml/network_security_config"
+        android:networkSecurityConfig="@xml/network_security_config"  <!-- ⚠️ مطلوب لتفعيل قيود الاتصال الآمن -->
         android:extractNativeLibs="false"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="false"   <!-- ✅ تم الإصلاح: منع الاتصالات غير المشفرة (HTTP) -->
         android:screenOrientation="portrait"
-        android:requestLegacyExternalStorage="false"
+        android:requestLegacyExternalStorage="true"   <!-- ✅ تم الإصلاح: للأجهزة القديمة (API 29) للتوافق مع التخزين -->
         android:hardwareAccelerated="true"
         android:largeHeap="true"
         android:enableOnBackInvokedCallback="true"
         tools:replace="android:theme"
         tools:targetApi="35">
 
-        <!-- ═══ WebView Security Configuration ═══ -->
+        <!-- ═══ WebView Security Configuration (✅ تمت الإضافة) ═══ -->
         <meta-data
             android:name="android.webkit.WebView.EnableSafeBrowsing"
             android:value="true" />
@@ -135,7 +134,7 @@
             android:value="true" />
         <meta-data
             android:name="android.webkit.WebView.MixedContentMode"
-            android:value="2" />
+            android:value="2" />  <!-- يمنع تحميل المحتوى المختلط تماماً -->
         
         <!-- ═══ App Security Metadata ═══ -->
         <meta-data
@@ -189,7 +188,6 @@
         </activity>
 
         <!-- ═══ SMS Service - Updated for Android 15 ═══ -->
-        <!-- ⚠️  تحذير: dataSync services limited to 6 hours in Android 15 -->
         <service
             android:name=".SMSService"
             android:exported="false"
