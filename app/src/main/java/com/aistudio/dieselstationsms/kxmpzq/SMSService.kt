@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * SMSService - محسّن ومصحح بالكامل
  *
  * التحسينات الإضافية:
+ * - استخدام موارد التطبيق للقيم القابلة للتكوين (مثل max_sms_per_minute)
  * - إضافة علامة isDestroyed لمنع بدء الخادم بعد التدمير
  * - جعل send_overdue_sms متزامنة مع حد أقصى 20 رسالة لتجنب حجب الطلب
  * - إضافة معامل limit إلى export_data مع تحديد افتراضي 1000 سجل لكل جدول
@@ -52,9 +53,11 @@ class SMSService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val isDestroyed = AtomicBoolean(false)
 
-    // Rate limiting
+    // Rate limiting – الآن يتم قراءة الحد الأقصى من المورد (res/values/integers.xml)
+    private val maxSmsPerMinute: Int by lazy {
+        resources.getInteger(R.integer.max_sms_per_minute)
+    }
     private val smsTimestamps = mutableListOf<Long>()
-    private val maxSmsPerMinute = 30
 
     private val geminiApiKey: String
         get() {
@@ -682,11 +685,9 @@ class SMSService : Service() {
          * تصدير البيانات مع حد أقصى للصفوف لتجنب OOM
          */
         private fun handleExportData(db: DatabaseHelper, params: Map<String, List<String>>, responseJson: JSONObject) {
-            // قراءة معامل limit (اختياري)
             val limit = params["limit"]?.firstOrNull()?.toIntOrNull() ?: DEFAULT_EXPORT_LIMIT
             val data = JSONObject()
 
-            // تصدير العملاء مع حد
             val customers = db.getCustomers()
             val limitedCustomers = if (customers.length() > limit) {
                 val arr = JSONArray()
@@ -695,7 +696,6 @@ class SMSService : Service() {
             } else customers
             data.put("customers", limitedCustomers)
 
-            // تصدير التعبئات مع حد
             val refills = db.getRefills()
             val limitedRefills = if (refills.length() > limit) {
                 val arr = JSONArray()
@@ -704,11 +704,9 @@ class SMSService : Service() {
             } else refills
             data.put("refills", limitedRefills)
 
-            // تصدير المعاملات (الأحدث أولاً) مع حد
             val transactions = db.getTransactions(limit = limit, offset = 0)
             data.put("transactions", transactions)
 
-            // تصدير سجلات SMS (الأحدث) مع حد
             val smsLogs = db.getSmsLogs()
             val limitedSms = if (smsLogs.length() > limit) {
                 val arr = JSONArray()
@@ -717,7 +715,6 @@ class SMSService : Service() {
             } else smsLogs
             data.put("sms_logs", limitedSms)
 
-            // تصدير سجلات النشاط (الأحدث) مع حد
             val activityLogs = db.getActivityLogs()
             val limitedActivity = if (activityLogs.length() > limit) {
                 val arr = JSONArray()
@@ -726,10 +723,8 @@ class SMSService : Service() {
             } else activityLogs
             data.put("activity_logs", limitedActivity)
 
-            // تصدير التنبيهات
             data.put("inventory_alerts", db.getInventoryAlerts())
 
-            // تصدير المدفوعات - نستخدم استعلام مباشر مع حد
             val payments = JSONArray()
             val dbRead = db.readableDatabase
             val cursor = dbRead.rawQuery(
@@ -763,7 +758,6 @@ class SMSService : Service() {
             val failedList = JSONArray()
             val total = overdue.length()
 
-            // تحديد عدد الرسائل التي سيتم إرسالها (حد أقصى)
             val toSend = minOf(total, MAX_OVERDUE_SMS)
 
             for (i in 0 until toSend) {
@@ -780,7 +774,6 @@ class SMSService : Service() {
                     } else {
                         failedList.put(name)
                     }
-                    // تأخير قصير لتجنب حظر النظام
                     Thread.sleep(SMS_DELAY_MS)
                 } else {
                     failedList.put(name)
@@ -861,16 +854,15 @@ class SMSService : Service() {
         }
         if (msg.length > MAX_SMS_LENGTH) {
             Log.w(TAG, "SMS too long (${msg.length}), truncating")
-            // يمكن تقسيم الرسائل ولكن تبسيطاً نختصرها
             db.logSms(phone, msg, type, "failed: too long")
             return false
         }
-        // Rate limiting بسيط
+        // Rate limiting باستخدام الحد المأخوذ من المورد
         synchronized(smsTimestamps) {
             val now = System.currentTimeMillis()
             smsTimestamps.removeAll { now - it > 60000 }
             if (smsTimestamps.size >= maxSmsPerMinute) {
-                Log.w(TAG, "Rate limit exceeded for SMS")
+                Log.w(TAG, "Rate limit exceeded for SMS (max: $maxSmsPerMinute per minute)")
                 db.logSms(phone, msg, type, "failed: rate limit")
                 return false
             }
