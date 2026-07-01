@@ -26,3 +26,12 @@
 -keep interface okhttp3.** { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# Keep Compose
+-keepclassmembers class * {
+    @androidx.compose.runtime.Composable <methods>;
+}
+
+# Keep Room entities
+-keep class com.aistudio.dieselstationsms.kxmpzq.data.** { *; }
+-keep class com.aistudio.dieselstationsms.kxmpzq.model.** { *; }
