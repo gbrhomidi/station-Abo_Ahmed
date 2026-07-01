@@ -5,6 +5,17 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+// ضبط إعدادات مترجم Kotlin لجميع المهام (jvmTarget + freeCompilerArgs)
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
+        )
+    }
+}
+
 android {
     namespace = "com.aistudio.dieselstationsms.kxmpzq"
     compileSdk = 35
@@ -18,7 +29,7 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // تصفية اللغات (حديث بدلاً من resConfigs)
+        // ✅ تصفية الموارد اللغوية (البديل الحديث عن resConfigs)
         androidResources {
             localeFilters += listOf("ar", "en")
         }
@@ -47,18 +58,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // إعدادات Kotlin (تحذير deprecation لكنها تعمل بأمان)
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=kotlin.RequiresOptIn",
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        )
-    }
-
     buildFeatures {
         compose = true
-        buildConfig = false   // تعطيل BuildConfig لمنع تسرب المفاتيح
+        buildConfig = false
     }
 
     composeOptions {
@@ -98,9 +100,83 @@ android {
 }
 
 dependencies {
-    // ... جميع التبعيات كما في النسخ السابقة دون تغيير ...
+    // Compose BOM
+    implementation(platform(libs.androidx.compose.bom))
+    
+    // Core Android
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    
+    // Compose UI
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
+    
+    // Navigation
+    implementation(libs.androidx.navigation.compose)
+    
+    // Room Database
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    
+    // Network
+    implementation(libs.retrofit)
+    implementation(libs.converter.moshi)
+    implementation(libs.okhttp)
+    implementation(libs.logging.interceptor)
+    implementation(libs.moshi.kotlin)
+    ksp(libs.moshi.kotlin.codegen)
+    
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.core)
+    
+    // WorkManager
+    implementation(libs.androidx.work)
+    
+    // Biometric
+    implementation("androidx.biometric:biometric:1.1.0")
+    
+    // أمان – تشفير البيانات الحساسة
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    
+    // أمان – كشف أجهزة الروت
+    implementation("com.scottyab:rootbeer-lib:0.1.0")
+    
+    // NanoHTTPD (خادم محلي)
+    implementation(libs.nanohttpd)
+    
+    // Testing
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.roborazzi.junit.rule)
+    testImplementation(libs.androidx.core)
+    testImplementation(libs.androidx.junit)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.runner)
+    
+    // Android Testing
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.runner)
+    
+    // Debug
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
+// حل تعارضات الإصدارات وفرض أحدث الإصلاحات الأمنية
 configurations.all {
     resolutionStrategy {
         force("com.squareup.okhttp3:okhttp:4.10.0")
@@ -109,11 +185,13 @@ configurations.all {
         force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
+        
         force("org.nanohttpd:nanohttpd:2.3.1")
         force("androidx.core:core-ktx:1.15.0")
     }
 }
 
+// فحص أمني تلقائي – يمنع رفع المفاتيح الحساسة إلى المستودع
 tasks.register<Exec>("securityCheck") {
     group = "verification"
     description = "Check for sensitive data in APK"
