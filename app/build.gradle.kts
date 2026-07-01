@@ -5,33 +5,50 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+// تحديد أداة JVM 17 لجميع مهام Kotlin
+kotlin {
+    jvmToolchain(17)
+}
+
+// تمرير وسائط المترجم الإضافية (opt-in للتجارب)
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    kotlinOptions {
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
+        )
+    }
+}
+
 android {
     namespace = "com.aistudio.dieselstationsms.kxmpzq"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.aistudio.dieselstationsms.kxmpzq"
-        minSdk = 26                      // ✅ تم الرفع إلى 26 (Android 8.0) لتفادي ثغرات الإصدارات القديمة
+        minSdk = 26                      // ✅ رفع إلى Android 8.0 (API 26) لتجنب ثغرات الإصدارات القديمة
         targetSdk = 35
         versionCode = 3
         versionName = "2.1 Pro"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        
-        // تقييد الموارد لتحسين الأداء والأمان
-        resConfigs("ar", "en")
+
+        // ✅ تصفية الموارد اللغوية – بديل حديث عن resConfigs
+        androidResources {
+            localeFilters += listOf("ar", "en")
+        }
     }
 
     buildTypes {
         release {
             isCrunchPngs = true
-            isMinifyEnabled = true       // ✅ تم التفعيل: يحجب الكود عن الهندسة العكسية عبر ProGuard/R8
-            isShrinkResources = true     // ✅ إزالة الموارد غير المستخدمة لتقليل الحجم والثغرات
+            isMinifyEnabled = true       // ✅ تفعيل R8/ProGuard لتمويه الكود
+            isShrinkResources = true     // ✅ إزالة الموارد غير المستخدمة
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // تعطيل وضع التصحيح في الإصدار النهائي
+            // تعطيل وضع التصحيح نهائياً في الإصدار الإنتاجي
             buildConfigField("boolean", "DEBUG_MODE", "false")
         }
         debug {
@@ -46,13 +63,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=kotlin.RequiresOptIn",
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        )
-    }
+    // ⚠️ لا نضع kotlinOptions هنا لأنها غير مدعومة مع kotlin.compose
+    // تم إعدادها أعلاه عبر tasks.withType<KotlinCompile>
 
     buildFeatures {
         compose = true
@@ -75,7 +87,6 @@ android {
                 "META-INF/DEPENDENCIES",
                 "META-INF/INDEX.LIST",
                 "META-INF/io.netty.versions.properties",
-                "META-INF/INDEX.LIST",
                 "DebugProbesKt.bin"
             )
         }
@@ -140,10 +151,10 @@ dependencies {
     // Biometric
     implementation("androidx.biometric:biometric:1.1.0")
     
-    // ✅ أمان - تشفير البيانات الحساسة (EncryptedSharedPreferences)
+    // ✅ أمان - تشفير البيانات الحساسة
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
-    // ✅ أمان - كشف أجهزة الروت (Root Detection)
+    // ✅ أمان - كشف أجهزة الروت
     implementation("com.scottyab:rootbeer-lib:0.1.0")
     
     // NanoHTTPD (Local Server)
@@ -173,7 +184,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
-// حل تعارضات الإصدارات لضمان استخدام أحدث الإصلاحات الأمنية
+// حل تعارضات الإصدارات وفرض أحدث التصحيحات الأمنية
 configurations.all {
     resolutionStrategy {
         force("com.squareup.okhttp3:okhttp:4.10.0")
@@ -183,13 +194,12 @@ configurations.all {
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
         
-        // ✅ إجبار استخدام إصدارات آمنة
         force("org.nanohttpd:nanohttpd:2.3.1")
         force("androidx.core:core-ktx:1.15.0")
     }
 }
 
-// ✅ أمان - فحص آلي لمنع إدراج المفاتيح الحساسة في المستودع
+// ✅ فحص أمني تلقائي – يمنع رفع المفاتيح الحساسة إلى المستودع
 tasks.register<Exec>("securityCheck") {
     group = "verification"
     description = "Check for sensitive data in APK"
