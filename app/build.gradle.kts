@@ -9,8 +9,7 @@
 //  4. تحسين إدارة التبعيات
 //  5. إضافة تكوين Lint الصارم
 //  6. تحسين إعدادات التجميع والأداء
-//  7. إزالة BuildConfig من الإنتاج (أمان)
-//  8. إضافة دعم التوقيع الرقمي
+//  7. إضافة دعم التوقيع الرقمي
 // ═══════════════════════════════════════════════════════════════
 
 plugins {
@@ -71,8 +70,6 @@ android {
             isMinifyEnabled = true
             // تفعيل: إزالة الموارد غير المستخدمة
             isShrinkResources = true
-            // تفعيل: تحسين الكود
-            isOptimizeCode = true
             // تفعيل: التوقيع الرقمي
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
@@ -98,24 +95,20 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // ═══ إصلاح: استخدام كتلة kotlin بدلاً من kotlinOptions ═══
-    // في AGP 8.x مع Kotlin 2.x، تم استبدال kotlinOptions بـ kotlin {}
-    kotlin {
-        jvmToolchain(17)
+    // ═══ إعدادات Kotlin الصحيحة ═══
+    // استخدام kotlinOptions (الطريقة الصحيحة لـ KGP 2.1.0)
+    kotlinOptions {
+        jvmTarget = "17"
         // إضافة: دعم الميزات الحديثة
-        compilerOptions {
-            freeCompilerArgs.addAll(
-                listOf(
-                    "-opt-in=kotlin.RequiresOptIn",
-                    "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-                )
-            )
-        }
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
+        )
     }
 
     buildFeatures {
         compose = true
-        // إعادة تفعيل buildConfig لأننا نستخدم buildConfigField
+        // تفعيل: buildConfig مطلوب لـ buildConfigField
         buildConfig = true
         // إضافة: ViewBinding (إذا لزم الأمر مستقبلاً)
         viewBinding = false
@@ -155,10 +148,10 @@ android {
         checkReleaseBuilds = true
         // إنشاء تقرير HTML
         htmlReport = true
-        htmlOutput = file("${project.buildDir}/reports/lint/lint-results.html")
+        htmlOutput = file("${layout.buildDirectory}/reports/lint/lint-results.html")
         // إنشاء تقرير XML
         xmlReport = true
-        xmlOutput = file("${project.buildDir}/reports/lint/lint-results.xml")
+        xmlOutput = file("${layout.buildDirectory}/reports/lint/lint-results.xml")
         // إهمال بعض التحذيرات المعروفة
         disable += setOf(
             "ObsoleteLintCustomCheck",
@@ -288,20 +281,9 @@ configurations.all {
 
 // مهمة لتنظيف الملفات المؤقتة قبل البناء
 tasks.register<Delete>("cleanTempFiles") {
-    delete(fileTree("${project.buildDir}/tmp"))
-    delete(fileTree("${project.buildDir}/intermediates"))
+    delete(fileTree("${layout.buildDirectory}/tmp"))
+    delete(fileTree("${layout.buildDirectory}/intermediates"))
     description = "حذف الملفات المؤقتة قبل البناء"
-}
-
-// مهمة للتحقق من الأمان قبل الإصدار
-tasks.register<Exec>("securityCheck") {
-    group = "verification"
-    description = "التحقق من الأمان قبل الإصدار"
-    commandLine("echo", "Security check passed")
-    doFirst {
-        println("🔒 فحص الأمان...")
-        // يمكن إضافة فحص المفاتيح هنا
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════
