@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)    // ← تمت الإضافة (ضروري لتفعيل kotlinOptions داخل android)
-    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.android)      // ضروري لـ kotlinOptions
+    alias(libs.plugins.kotlin.compose)       // Compose compiler plugin (يحل محل composeOptions)
     alias(libs.plugins.google.devtools.ksp)
     alias(libs.plugins.roborazzi)
 }
@@ -12,14 +12,13 @@ android {
 
     defaultConfig {
         applicationId = "com.aistudio.dieselstationsms.kxmpzq"
-        minSdk = 26                      // ✅ رفع إلى Android 8.0 لتجنب ثغرات الإصدارات القديمة
+        minSdk = 26
         targetSdk = 35
         versionCode = 3
         versionName = "2.1 Pro"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // ✅ تصفية الموارد اللغوية (بديل حديث عن resConfigs)
         androidResources {
             localeFilters += listOf("ar", "en")
         }
@@ -28,8 +27,8 @@ android {
     buildTypes {
         release {
             isCrunchPngs = true
-            isMinifyEnabled = true       // ✅ تفعيل R8/ProGuard
-            isShrinkResources = true     // ✅ إزالة الموارد غير المستخدمة
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -48,7 +47,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // ✅ مع وجود kotlin-android أصبح kotlinOptions معرّفًا داخل android
     kotlinOptions {
         jvmTarget = "17"
         freeCompilerArgs += listOf(
@@ -59,10 +57,8 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true   // ✅ تم التغيير إلى true لاستخدام buildConfigField
+        buildConfig = true
     }
-
-    // ❌ حذف composeOptions بالكامل (Kotlin 2.1 + Compose Plugin يديران الإصدار تلقائياً)
 
     packaging {
         resources {
@@ -117,7 +113,7 @@ dependencies {
     // Navigation
     implementation(libs.androidx.navigation.compose)
     
-    // Room Database
+    // Room
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
@@ -140,13 +136,11 @@ dependencies {
     // Biometric
     implementation("androidx.biometric:biometric:1.1.0")
     
-    // ✅ أمان – تشفير البيانات الحساسة
+    // Security
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    
-    // ✅ أمان – كشف أجهزة الروت
     implementation("com.scottyab:rootbeer-lib:0.1.0")
     
-    // NanoHTTPD (خادم محلي)
+    // NanoHTTPD
     implementation(libs.nanohttpd)
     
     // Testing
@@ -161,14 +155,12 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.runner)
     
-    // Android Testing
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.runner)
     
-    // Debug
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
@@ -182,13 +174,12 @@ configurations.all {
         force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
-        
         force("org.nanohttpd:nanohttpd:2.3.1")
         force("androidx.core:core-ktx:1.15.0")
     }
 }
 
-// ✅ فحص أمني تلقائي – يمنع رفع المفاتيح الحساسة
+// فحص أمني تلقائي – يمنع رفع المفاتيح الحساسة
 tasks.register<Exec>("securityCheck") {
     group = "verification"
     description = "Check for sensitive data in APK"
