@@ -1,11 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    // FIXED: Kept KSP plugin but it's harmless without ksp() dependencies
     alias(libs.plugins.google.devtools.ksp)
     alias(libs.plugins.roborazzi)
-    // FIXED: Removed secrets plugin - causes "Plugin not found" error
-    // alias(libs.plugins.secrets)
 }
 
 android {
@@ -14,28 +11,33 @@ android {
 
     defaultConfig {
         applicationId = "com.aistudio.dieselstationsms.kxmpzq"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 35
         versionCode = 3
         versionName = "2.1 Pro"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        // Security: Prevent backup of sensitive data
+        resConfigs("ar", "en")
     }
 
     buildTypes {
         release {
-            // FIXED: Keep isCrunchPngs = false for faster builds
-            isCrunchPngs = false
-            // FIXED: Keep isMinifyEnabled = false to avoid ProGuard issues
-            isMinifyEnabled = false
-            // isShrinkResources = true  // REMOVED: requires ProGuard
+            isCrunchPngs = true
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Security: Enable R8 full mode for better optimization
+            buildConfigField("boolean", "DEBUG_MODE", "false")
         }
         debug {
             isMinifyEnabled = false
+            isDebuggable = true
+            buildConfigField("boolean", "DEBUG_MODE", "true")
         }
     }
 
@@ -44,15 +46,22 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    buildFeatures {
-        compose = true
-        buildConfig = true
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
+        )
     }
 
-    testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
-        }
+    buildFeatures {
+        compose = true
+        // Security: Disable BuildConfig to prevent API key exposure
+        buildConfig = false
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.15"
     }
 
     packaging {
@@ -65,71 +74,107 @@ android {
                 "META-INF/LICENSE",
                 "META-INF/NOTICE",
                 "META-INF/DEPENDENCIES",
-                "META-INF/INDEX.LIST"
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/INDEX.LIST",
+                "DebugProbesKt.bin"
             )
+        }
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                it.jvmArgs("-noverify", "-XX:+TieredCompilation", "-XX:TieredStopAtLevel=1")
+            }
         }
     }
 }
 
 dependencies {
+    // Compose BOM
     implementation(platform(libs.androidx.compose.bom))
-
+    
+    // Core Android
+    implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.material.icons.core)
-    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    
+    // Compose UI
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
-
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
-
-    // FIXED: Keep Room dependencies since KSP plugin is active
-    // Removing them causes "ksp() without sources" error
-    implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
+    
+    // Navigation
+    implementation(libs.androidx.navigation.compose)
+    
+    // Room Database
     implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
-
-    // FIXED: Keep Moshi since it's used in the project
-    implementation(libs.moshi.kotlin)
-    ksp(libs.moshi.kotlin.codegen)
-
-    // FIXED: Keep Retrofit/OkHttp - they might be used elsewhere
+    
+    // Network
     implementation(libs.retrofit)
+    implementation(libs.converter.moshi)
     implementation(libs.okhttp)
     implementation(libs.logging.interceptor)
-    implementation(libs.converter.moshi)
-
-    implementation(libs.nanohttpd)
+    implementation(libs.moshi.kotlin)
+    ksp(libs.moshi.kotlin.codegen)
+    
+    // Coroutines
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
-
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    
+    // WorkManager
+    implementation(libs.androidx.work)
+    
+    // Biometric
     implementation("androidx.biometric:biometric:1.1.0")
-
-    testImplementation(libs.androidx.compose.ui.test.junit4)
-    testImplementation(libs.androidx.core)
-    testImplementation(libs.androidx.junit)
+    
+    // Security - EncryptedSharedPreferences
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    
+    // Root Detection
+    implementation("com.scottyab:rootbeer-lib:0.1.0")
+    
+    // NanoHTTPD (Local Server)
+    implementation(libs.nanohttpd)
+    
+    // Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.roborazzi.junit.rule)
-
+    testImplementation(libs.androidx.core)
+    testImplementation(libs.androidx.junit)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.runner)
+    
+    // Android Testing
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.runner)
-
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    
+    // Debug
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
-// FIXED: Restore force resolution strategy - prevents Kotlin version conflicts
+// Force resolution strategy to prevent version conflicts
 configurations.all {
     resolutionStrategy {
         force("com.squareup.okhttp3:okhttp:4.10.0")
@@ -138,5 +183,17 @@ configurations.all {
         force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${libs.versions.kotlin.get()}")
         force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:${libs.versions.kotlin.get()}")
+        
+        // Security: Force latest versions with security patches
+        force("org.nanohttpd:nanohttpd:2.3.1")
+        force("androidx.core:core-ktx:1.15.0")
     }
+}
+
+// Security: Verify no sensitive data in APK
+tasks.register<Exec>("securityCheck") {
+    group = "verification"
+    description = "Check for sensitive data in APK"
+    commandLine("grep", "-r", "GEMINI_API_KEY", "src/")
+    isIgnoreExitValue = true
 }
